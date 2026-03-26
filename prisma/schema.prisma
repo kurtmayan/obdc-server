@@ -1,0 +1,77 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Stores {
+  id               String            @id @default(cuid(2))
+  name             String
+  region           String
+  province         String
+  municipality     String
+  barangay         String
+  exactAddress     String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  devices          Devices[]
+  storeSyncRecords StoreSyncRecord[]
+}
+
+model Devices {
+  id                String             @id @default(cuid(2))
+  model             String
+  serialNumber      String
+  store             Stores             @relation(fields: [storesId], references: [id])
+  storesId          String
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  attendanceRecords AttendanceRecord[]
+}
+
+model AttendanceRecord {
+  id               String            @id @default(cuid(2))
+  employeeName     String
+  timeIn           DateTime
+  timeOut          DateTime
+  devices          Devices           @relation(fields: [devicesId], references: [id])
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  storeSyncRecords StoreSyncRecord[]
+  devicesId        String
+}
+
+model StoreSyncRecord {
+  id                 String           @id @default(cuid(2))
+  syncDate           DateTime         @default(now())
+  store              Stores           @relation(fields: [storesId], references: [id])
+  storesId           String
+  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id])
+  attendanceRecordId String
+}
+
+enum Role {
+  HR
+  SUPERADMIN
+}
+
+model Users {
+  id         String   @id @default(cuid(2))
+  email      String   @unique
+  password   String
+  firstName  String
+  middleName String
+  lastName   String
+  role       Role
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
