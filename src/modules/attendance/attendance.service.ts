@@ -11,6 +11,7 @@ type Data = {
 type StoredData = {
   attendance: Data[];
   'device-id': string;
+  lastSync: Date;
 };
 
 @Injectable()
@@ -21,15 +22,21 @@ export class AttendanceService {
 
   constructor(private prisma: PrismaService) {}
 
-  createAttendanceRecord(data: any) {
+  createAttendanceRecord(data: StoredData) {
     this.logger.log(data);
-    this.data.push(data);
+    const newData = { ...data, lastSync: new Date() };
+    console.log(newData);
+
+    this.data.push(newData);
     return data;
   }
 
   getAllData() {
     const dataMapping = {
-      'K40-PAS4252500165': 'Malolos Bulacan',
+      'K40-PAS4252500165': {
+        storeName: 'MR.DIY - Malolos Bulacan',
+        region: 'Region III',
+      },
     };
 
     console.log(dataMapping['K40-PAS4252500165']);
@@ -41,6 +48,8 @@ export class AttendanceService {
 
       return {
         storeLoc: dataMapping[item['device-id'] as any],
+        lastSync: new Date(),
+        status: 'synced',
         attendance: item.attendance,
       };
     });
