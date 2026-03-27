@@ -47,6 +47,7 @@ export class AttendanceService {
       console.log('+++++++++++++++++++++');
 
       return {
+        deviceId: item['device-id'],
         storeLoc: dataMapping[item['device-id'] as any],
         lastSync: new Date(),
         status: 'synced',
