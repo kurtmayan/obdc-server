@@ -49,7 +49,7 @@ export class AttendanceService {
       return {
         deviceId: item['device-id'],
         storeLoc: dataMapping[item['device-id'] as any],
-        lastSync: new Date(),
+        lastSync: item.lastSync,
         status: 'synced',
         attendance: item.attendance,
       };
