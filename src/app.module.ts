@@ -4,6 +4,10 @@ import { AppService } from './app.service';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaService } from './modules/prisma/prisma.service';
+import { DeviceManagementModule } from './modules/device-management/device-management.module';
+import { StoreController } from './modules/store/store.controller';
+import { StoreModule } from './modules/store/store.module';
+import { StoreService } from './modules/store/store.service';
 
 @Module({
   imports: [
@@ -11,8 +15,10 @@ import { PrismaService } from './modules/prisma/prisma.service';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    DeviceManagementModule,
+    StoreModule,
   ],
-  controllers: [AppController],
-  providers: [AppService, PrismaService],
+  controllers: [AppController, StoreController],
+  providers: [AppService, PrismaService, StoreService],
 })
 export class AppModule {}
