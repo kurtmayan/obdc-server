@@ -4,10 +4,10 @@ import { AppService } from './app.service';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaService } from './modules/prisma/prisma.service';
-import { DeviceManagementModule } from './modules/device-management/device-management.module';
 import { StoreController } from './modules/store/store.controller';
-import { StoreModule } from './modules/store/store.module';
 import { StoreService } from './modules/store/store.service';
+import { StoreModule } from './modules/store/store.module';
+import { DeviceModule } from './modules/device/device.module';
 
 @Module({
   imports: [
@@ -15,8 +15,8 @@ import { StoreService } from './modules/store/store.service';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    DeviceManagementModule,
     StoreModule,
+    DeviceModule,
   ],
   controllers: [AppController, StoreController],
   providers: [AppService, PrismaService, StoreService],
