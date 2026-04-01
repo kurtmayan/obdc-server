@@ -37,31 +37,41 @@ export class AttendanceService {
     return data;
   }
 
-  getAllData() {
-    const dataMapping = {
-      'K40-PAS4252500165': {
-        storeName: 'MR.DIY - Malolos Bulacan',
-        region: 'Region III',
+  async getAllData() {
+    return await this.prisma.storeSyncRecord.findMany({
+      include: {
+        attendanceRecord: true,
+        store: {
+          include: {
+            devices: true,
+          },
+        },
       },
-    };
-
-    console.log(dataMapping['K40-PAS4252500165']);
-
-    const transformedData = this.data.map((item) => {
-      console.log('+++++++++++++++++++++');
-      console.log(item);
-      console.log('+++++++++++++++++++++');
-
-      return {
-        deviceId: item['device-id'],
-        storeLoc: dataMapping[item['device-id'] as any],
-        lastSync: item.lastSync,
-        status: 'synced',
-        attendance: item.attendance,
-      };
     });
+    // const dataMapping = {
+    //   'K40-PAS4252500165': {
+    //     storeName: 'MR.DIY - Malolos Bulacan',
+    //     region: 'Region III',
+    //   },
+    // };
 
-    console.log(transformedData);
-    return transformedData;
+    // console.log(dataMapping['K40-PAS4252500165']);
+
+    // const transformedData = this.data.map((item) => {
+    //   console.log('+++++++++++++++++++++');
+    //   console.log(item);
+    //   console.log('+++++++++++++++++++++');
+
+    //   return {
+    //     deviceId: item['device-id'],
+    //     storeLoc: dataMapping[item['device-id'] as any],
+    //     lastSync: item.lastSync,
+    //     status: 'synced',
+    //     attendance: item.attendance,
+    //   };
+    // });
+
+    // console.log(transformedData);
+    // return transformedData;
   }
 }

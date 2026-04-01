@@ -44,15 +44,14 @@ export class SyncService {
 
     console.log(storeSyncRecord);
 
-    const transformedData: AttendanceRecordCreateManyInput[] =
-      data.attendance.map((log) => {
-        return {
-          employeeName: log.name,
-          logDate: new Date(log.logDate),
-          logType: 'timeIn',
-          storeSyncRecordID: storeSyncRecord.id,
-        };
-      });
+    const transformedData: any = data.attendance.map((log) => {
+      return {
+        employeeName: log.name,
+        logDate: new Date(log.logDate),
+        logType: 'timeIn',
+        storeSyncRecordID: storeSyncRecord.id,
+      };
+    });
 
     const attendanceRecord = await this.prisma.attendanceRecord.createMany({
       data: transformedData,

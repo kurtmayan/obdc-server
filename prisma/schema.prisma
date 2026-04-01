@@ -66,8 +66,8 @@ model Devices {
 }
 
 enum LogType {
-  TIMEIN
-  TIMEOUT
+  timeIn
+  timeOut
 }
 
 model AttendanceRecord {
