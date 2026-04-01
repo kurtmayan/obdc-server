@@ -8,6 +8,7 @@ import { StoreController } from './modules/store/store.controller';
 import { StoreService } from './modules/store/store.service';
 import { StoreModule } from './modules/store/store.module';
 import { DeviceModule } from './modules/device/device.module';
+import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { DeviceModule } from './modules/device/device.module';
     }),
     StoreModule,
     DeviceModule,
+    SyncModule,
   ],
   controllers: [AppController, StoreController],
   providers: [AppService, PrismaService, StoreService],
