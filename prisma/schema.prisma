@@ -50,40 +50,47 @@ model Stores {
   updatedAt        DateTime          @updatedAt
   devices          Devices[]
   storeSyncRecords StoreSyncRecord[]
+  contactInfo      String?
 }
 
 model Devices {
-  id                String             @id @default(cuid(2))
-  model             String
-  serialNumber      String
+  id           String   @id @default(cuid(2))
+  model        String
+  serialNumber String
   /// @DtoRelationCanConnectOnCreate
   /// @DtoRelationCanConnectOnUpdate
-  store             Stores             @relation(fields: [storesId], references: [id])
-  storesId          String
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  attendanceRecords AttendanceRecord[]
+  store        Stores   @relation(fields: [storesId], references: [id])
+  storesId     String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum LogType {
+  TIMEIN
+  TIMEOUT
 }
 
 model AttendanceRecord {
-  id               String            @id @default(cuid(2))
-  employeeName     String
-  timeIn           DateTime
-  timeOut          DateTime
-  devices          Devices           @relation(fields: [devicesId], references: [id])
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  storeSyncRecords StoreSyncRecord[]
-  devicesId        String
+  id                String          @id @default(cuid(2))
+  employeeName      String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  logType           LogType
+  logDate           DateTime
+  storeSyncRecordID String
+  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id])
 }
 
 model StoreSyncRecord {
-  id                 String           @id @default(cuid(2))
-  syncDate           DateTime         @default(now())
-  store              Stores           @relation(fields: [storesId], references: [id])
-  storesId           String
-  attendanceRecord   AttendanceRecord @relation(fields: [attendanceRecordId], references: [id])
-  attendanceRecordId String
+  id               String             @id @default(cuid(2))
+  syncDate         DateTime           @default(now())
+  /// @DtoRelationCanConnectOnCreate
+  /// @DtoRelationCanConnectOnUpdate
+  store            Stores             @relation(fields: [storesId], references: [id])
+  storesId         String
+  /// @DtoRelationCanConnectOnCreate
+  /// @DtoRelationCanConnectOnUpdate
+  attendanceRecord AttendanceRecord[]
 }
 
 enum Role {

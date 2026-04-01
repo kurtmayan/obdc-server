@@ -1,5 +1,11 @@
-import { Injectable, Logger, LoggerService } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  LoggerService,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateStoreSyncRecordDto } from 'src/generated/dto/storeSyncRecord/dto/create-storeSyncRecord.dto';
 
 type Data = {
   name: string;
