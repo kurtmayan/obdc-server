@@ -27,6 +27,12 @@ export class AttendanceService {
           },
           take: 1,
         },
+        devices: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 1,
+        },
       },
     });
   }
