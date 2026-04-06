@@ -7,11 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
-import { AttendanceRecordCreateManyInput } from 'src/generated/prisma/models';
-
-type Log = {
-  [key: number]: string;
-};
+import { LogType } from 'src/generated/prisma/enums';
 
 @Injectable()
 export class SyncService {
@@ -31,8 +27,6 @@ export class SyncService {
 
     if (!device) throw new NotFoundException();
 
-    console.log(data);
-
     const storeSyncRecord = await this.prisma.storeSyncRecord.create({
       data: {
         storesId: device.store.id,
@@ -42,13 +36,11 @@ export class SyncService {
     if (!storeSyncRecord)
       throw new ConflictException('Sync record not created!');
 
-    console.log(storeSyncRecord);
-
-    const transformedData: any = data.attendance.map((log) => {
+    const transformedData = data.attendance.map((log) => {
       return {
         employeeName: log.name,
         logDate: new Date(log.logDate),
-        logType: 'timeIn',
+        logType: log.logType as unknown as LogType,
         storeSyncRecordID: storeSyncRecord.id,
       };
     });

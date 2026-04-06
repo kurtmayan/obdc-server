@@ -4,15 +4,15 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { CreateDevicesDto } from 'src/generated/dto/devices/dto/create-devices.dto';
-import { UpdateDevicesDto } from 'src/generated/dto/devices/dto/update-devices.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateDeviceDto } from './dto/create-device.dto';
+import { UpdateDeviceDto } from './dto/update-device.dto';
 
 @Injectable()
 export class DeviceService {
   constructor(private prismaService: PrismaService) {}
 
-  async create(createDeviceDto: CreateDevicesDto) {
+  async create(createDeviceDto: CreateDeviceDto) {
     const checkSerialNumberExist = await this.prismaService.devices.findFirst({
       where: {
         serialNumber: createDeviceDto.serialNumber,
@@ -23,11 +23,15 @@ export class DeviceService {
         'Device with this serial number already exists',
       );
     const checkStoreExist = await this.prismaService.stores.findFirst({
-      where: { id: createDeviceDto.store.connect.id },
+      where: { id: createDeviceDto.storeId },
     });
     if (!checkStoreExist) throw new NotFoundException('Store not found');
     const response = await this.prismaService.devices.create({
-      data: createDeviceDto,
+      data: {
+        model: createDeviceDto.model,
+        serialNumber: createDeviceDto.serialNumber,
+        storesId: createDeviceDto.storeId,
+      },
     });
     if (!response) throw new UnprocessableEntityException();
     return response;
@@ -45,14 +49,14 @@ export class DeviceService {
     return response;
   }
 
-  async update(id: string, updateDeviceDto: UpdateDevicesDto) {
+  async update(id: string, updateDeviceDto: UpdateDeviceDto) {
     const findDevice = await this.prismaService.devices.findFirst({
       where: { id },
     });
     if (!findDevice) throw new NotFoundException('Device not found');
-    if (updateDeviceDto.store?.connect.id) {
+    if (updateDeviceDto.storeId) {
       const checkStoreExist = await this.prismaService.stores.findFirst({
-        where: { id: updateDeviceDto.store.connect.id },
+        where: { id: updateDeviceDto.storeId },
       });
       if (!checkStoreExist) throw new NotFoundException('Store not found');
     }

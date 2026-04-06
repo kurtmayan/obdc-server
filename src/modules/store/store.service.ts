@@ -5,14 +5,14 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateStoresDto } from 'src/generated/dto/stores/dto/create-stores.dto';
-import { UpdateStoresDto } from 'src/generated/dto/stores/dto/update-stores.dto';
+import { UpdateStoreDto } from './dto/update-store.dto';
+import { CreateStoreDto } from './dto/create-store.dto';
 
 @Injectable()
 export class StoreService {
   constructor(private prismaService: PrismaService) {}
 
-  async create(createStoreDto: CreateStoresDto) {
+  async create(createStoreDto: CreateStoreDto) {
     const checkNameExist = await this.prismaService.stores.findFirst({
       where: {
         name: createStoreDto.name,
@@ -39,7 +39,7 @@ export class StoreService {
     return response;
   }
 
-  async update(id: string, updateStoreDto: UpdateStoresDto) {
+  async update(id: string, updateStoreDto: UpdateStoreDto) {
     const findStore = await this.prismaService.stores.findFirst({
       where: { id },
     });

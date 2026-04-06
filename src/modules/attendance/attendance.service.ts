@@ -1,44 +1,12 @@
-import {
-  Injectable,
-  Logger,
-  LoggerService,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateStoreSyncRecordDto } from 'src/generated/dto/storeSyncRecord/dto/create-storeSyncRecord.dto';
-
-type Data = {
-  name: string;
-  user_id: string;
-  timeIn: string;
-  timeOut: string;
-};
-
-type StoredData = {
-  attendance: Data[];
-  'device-id': string;
-  lastSync: Date;
-};
 
 @Injectable()
 export class AttendanceService {
-  private logger = new Logger(AttendanceService.name);
-
-  private data: StoredData[] = [];
-
-  constructor(private prisma: PrismaService) {}
-
-  createAttendanceRecord(data: StoredData) {
-    this.logger.log(data);
-    const newData = { ...data, lastSync: new Date() };
-    console.log(newData);
-
-    this.data.push(newData);
-    return data;
-  }
+  constructor(private prismaService: PrismaService) {}
 
   async getAllData() {
-    return await this.prisma.storeSyncRecord.findMany({
+    return await this.prismaService.storeSyncRecord.findMany({
       include: {
         attendanceRecord: true,
         store: {
@@ -48,30 +16,56 @@ export class AttendanceService {
         },
       },
     });
-    // const dataMapping = {
-    //   'K40-PAS4252500165': {
-    //     storeName: 'MR.DIY - Malolos Bulacan',
-    //     region: 'Region III',
-    //   },
-    // };
+  }
 
-    // console.log(dataMapping['K40-PAS4252500165']);
+  async getGeneralRecord() {
+    return await this.prismaService.stores.findMany({
+      include: {
+        storeSyncRecords: {
+          orderBy: {
+            syncDate: 'desc',
+          },
+          take: 1,
+        },
+        devices: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 1,
+        },
+      },
+    });
+  }
 
-    // const transformedData = this.data.map((item) => {
-    //   console.log('+++++++++++++++++++++');
-    //   console.log(item);
-    //   console.log('+++++++++++++++++++++');
+  async getStoreRecord(id: string) {
+    const storeSync = await this.prismaService.storeSyncRecord.findMany({
+      where: {
+        storesId: id,
+      },
+      include: {
+        attendanceRecord: true,
+      },
+    });
 
-    //   return {
-    //     deviceId: item['device-id'],
-    //     storeLoc: dataMapping[item['device-id'] as any],
-    //     lastSync: item.lastSync,
-    //     status: 'synced',
-    //     attendance: item.attendance,
-    //   };
-    // });
+    return storeSync.map((e) => ({
+      id: e.id,
+      logDate: e.syncDate,
+      lastSync: e.syncDate,
+      status: 'synced',
+      pending: 0,
+      totalRecord: e.attendanceRecord.length,
+    }));
+  }
 
-    // console.log(transformedData);
-    // return transformedData;
+  async getStoreDetailedRecord(storeId: string, syncRecordId: string) {
+    return await this.prismaService.storeSyncRecord.findFirst({
+      where: {
+        id: syncRecordId,
+        storesId: storeId,
+      },
+      include: {
+        attendanceRecord: true,
+      },
+    });
   }
 }

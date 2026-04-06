@@ -8,15 +8,15 @@ import {
   Delete,
 } from '@nestjs/common';
 import { DeviceService } from './device.service';
-import { CreateDevicesDto } from 'src/generated/dto/devices/dto/create-devices.dto';
-import { UpdateDevicesDto } from 'src/generated/dto/devices/dto/update-devices.dto';
+import { CreateDeviceDto } from './dto/create-device.dto';
+import { UpdateDeviceDto } from './dto/update-device.dto';
 
 @Controller('device')
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
 
   @Post()
-  create(@Body() createDeviceDto: CreateDevicesDto) {
+  create(@Body() createDeviceDto: CreateDeviceDto) {
     return this.deviceService.create(createDeviceDto);
   }
 
@@ -31,7 +31,7 @@ export class DeviceController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDevicesDto) {
+  update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDeviceDto) {
     return this.deviceService.update(id, updateDeviceDto);
   }
 

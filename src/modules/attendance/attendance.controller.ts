@@ -1,17 +1,30 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 
 @Controller('attendance')
 export class AttendanceController {
-  constructor(private service: AttendanceService) {}
-
-  @Post('new')
-  createAttendanceRecord(@Body() data: any) {
-    return this.service.createAttendanceRecord(data);
-  }
+  constructor(private attendanceService: AttendanceService) {}
 
   @Get('all')
   getAllRecords() {
-    return this.service.getAllData();
+    return this.attendanceService.getAllData();
+  }
+
+  @Get('store')
+  getGeneralRecord() {
+    return this.attendanceService.getGeneralRecord();
+  }
+
+  @Get('store/:storeId')
+  getStoreRecord(@Param('storeId') storeId: string) {
+    return this.attendanceService.getStoreRecord(storeId);
+  }
+
+  @Get('store/:id/:syncRecordId')
+  getStoreDetailedRecord(
+    @Param('storeId') storeId: string,
+    @Param('syncRecordId') syncRecordId: string,
+  ) {
+    return this.attendanceService.getStoreDetailedRecord(storeId, syncRecordId);
   }
 }

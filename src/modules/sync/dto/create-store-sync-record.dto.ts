@@ -1,8 +1,8 @@
 import {} from 'class-validator';
 
 export type LogType = {
-  0: 'timein';
-  1: 'timeout';
+  0: 'timeIn';
+  1: 'timeOut';
 };
 
 export type Attendance = {
