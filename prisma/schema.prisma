@@ -9,37 +9,13 @@ generator client {
   moduleFormat = "cjs"
 }
 
-generator nestjsDto {
-  provider                        = "prisma-generator-nestjs-dto"
-  output                          = "../src/generated/dto"
-  prismaClientImportPath          = ""
-  outputToNestJsResourceStructure = "true"
-  flatResourceStructure           = "false"
-  exportRelationModifierClasses   = "true"
-  reExport                        = "false"
-  generateFileTypes               = "all"
-  createDtoPrefix                 = "Create"
-  updateDtoPrefix                 = "Update"
-  dtoSuffix                       = "Dto"
-  entityPrefix                    = ""
-  entitySuffix                    = ""
-  classValidation                 = "true"
-  fileNamingStyle                 = "camel"
-  noDependencies                  = "false"
-  outputType                      = "class"
-  definiteAssignmentAssertion     = "false"
-  requiredResponseApiProperty     = "true"
-  prettier                        = "true"
-  wrapRelationsAsType             = "false"
-  showDefaultValues               = "false"
-}
-
 datasource db {
   provider = "postgresql"
 }
 
 model Stores {
   id               String            @id @default(cuid(2))
+  code             String?
   name             String
   region           String
   province         String
@@ -57,25 +33,19 @@ model Devices {
   id           String   @id @default(cuid(2))
   model        String
   serialNumber String
-  /// @DtoRelationCanConnectOnCreate
-  /// @DtoRelationCanConnectOnUpdate
   store        Stores   @relation(fields: [storesId], references: [id])
   storesId     String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
 
-enum LogType {
-  timeIn
-  timeOut
-}
-
 model AttendanceRecord {
   id                String          @id @default(cuid(2))
+  userId            String
   employeeName      String
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
-  logType           LogType
+  logType           Int
   logDate           DateTime
   storeSyncRecordID String
   storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id])
@@ -84,12 +54,8 @@ model AttendanceRecord {
 model StoreSyncRecord {
   id               String             @id @default(cuid(2))
   syncDate         DateTime           @default(now())
-  /// @DtoRelationCanConnectOnCreate
-  /// @DtoRelationCanConnectOnUpdate
   store            Stores             @relation(fields: [storesId], references: [id])
   storesId         String
-  /// @DtoRelationCanConnectOnCreate
-  /// @DtoRelationCanConnectOnUpdate
   attendanceRecord AttendanceRecord[]
 }
 
