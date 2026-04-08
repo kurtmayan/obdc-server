@@ -10,6 +10,10 @@ import { StoreModule } from './modules/store/store.module';
 import { DeviceModule } from './modules/device/device.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { APP_GUARD } from '@nestjs/core';
+import { RolesGuard } from './modules/roles/roles.guard';
+import { AuthGuard } from './modules/auth/auth.guard';
+import { MailModule } from './modules/mail/mail.module';
 
 @Module({
   imports: [
@@ -21,8 +25,21 @@ import { AuthModule } from './modules/auth/auth.module';
     DeviceModule,
     SyncModule,
     AuthModule,
+    MailModule,
   ],
   controllers: [AppController, StoreController],
-  providers: [AppService, PrismaService, StoreService],
+  providers: [
+    AppService,
+    PrismaService,
+    StoreService,
+    {
+      provide: APP_GUARD,
+      useClass: AuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+  ],
 })
 export class AppModule {}

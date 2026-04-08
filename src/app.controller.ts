@@ -1,13 +1,15 @@
 import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
-import { Public } from './modules/auth/auth.decorator';
+import { Roles } from './modules/roles/roles.decorator';
+import { Role } from './generated/prisma/enums';
 
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
+  @Roles(Role.SUPERADMIN)
   @Get()
-  getHello(): string {
+  getHello() {
     return this.appService.getHello();
   }
 
