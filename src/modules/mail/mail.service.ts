@@ -28,21 +28,18 @@ export class MailService {
       'templates',
       'otp.hbs',
     );
-
     const templateSource = fs.readFileSync(templatePath, 'utf8');
     const template = handlebars.compile(templateSource);
     const html = template({
       name: checkUserExist.firstName + ' ' + checkUserExist.lastName,
       otp: args.otp,
     });
-
     const data = await this.resend.emails.send({
       from: `otp@${this.configService.get<string>('RESEND_DOMAIN')}`,
       to: [args.email],
       html,
       subject: 'Your OTP Code',
     });
-
     return data;
   }
 
@@ -64,21 +61,53 @@ export class MailService {
       'templates',
       'forgot-password.hbs',
     );
-
     const templateSource = fs.readFileSync(templatePath, 'utf8');
     const template = handlebars.compile(templateSource);
     const html = template({
       name: args.name,
       resetLink: args.resetLink,
     });
-
     const data = await this.resend.emails.send({
       from: `noreply@${this.configService.get<string>('RESEND_DOMAIN')}`,
       to: [args.email],
       html,
       subject: 'Password Reset Request',
     });
+    return data;
+  }
 
+  async sendInviteUser(args: {
+    email: string;
+    password: string;
+    name: string;
+  }) {
+    const checkUserExist = await this.prismaService.users.findFirst({
+      where: { email: args.email },
+    });
+    if (!checkUserExist) {
+      throw new NotFoundException('User not found');
+    }
+    const templatePath = path.join(
+      process.cwd(),
+      'dist',
+      'modules',
+      'mail',
+      'templates',
+      'invite-user.hbs',
+    );
+    const templateSource = fs.readFileSync(templatePath, 'utf8');
+    const template = handlebars.compile(templateSource);
+    const html = template({
+      name: args.name,
+      email: args.email,
+      password: args.password,
+    });
+    const data = await this.resend.emails.send({
+      from: `noreply@${this.configService.get<string>('RESEND_DOMAIN')}`,
+      to: [args.email],
+      html,
+      subject: 'You are invited!',
+    });
     return data;
   }
 }

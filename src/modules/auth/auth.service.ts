@@ -31,6 +31,10 @@ export class AuthService {
     });
     if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
 
+    if (checkUserExist.status !== 'ACTIVE' || !checkUserExist.password) {
+      throw new UnauthorizedException('User has not been activated');
+    }
+
     const isMatch = await bcrypt.compare(
       credentials.password,
       checkUserExist.password,

@@ -65,10 +65,15 @@ enum Role {
   MP
 }
 
+enum UserStatus {
+  ACTIVE
+  PENDING
+}
+
 model Users {
-  id                     String    @id @default(cuid(2))
-  email                  String    @unique
-  password               String
+  id                     String     @id @default(cuid(2))
+  email                  String     @unique
+  password               String?
   firstName              String
   middleName             String
   lastName               String
@@ -77,6 +82,8 @@ model Users {
   otpExpiresAt           DateTime?
   passwordResetToken     String?
   passwordResetExpiresAt DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  contactNumber          String?
+  status                 UserStatus @default(PENDING)
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
 }
