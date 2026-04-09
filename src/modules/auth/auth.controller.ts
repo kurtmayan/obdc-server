@@ -5,6 +5,7 @@ import { Public } from './auth.decorator';
 import { VerifyOtpAuthDto } from './dto/verify-otp-auth.dto';
 import type { Request } from 'express';
 import { JwtPayload } from 'jsonwebtoken';
+import { ResetPasswordAuthDto } from './dto/reset-password.auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -31,5 +32,17 @@ export class AuthController {
   @Get('validate')
   validateToken(@Req() req: Request & { user: JwtPayload }) {
     return req.user;
+  }
+
+  @Public()
+  @Post('forgot-password')
+  forgotPassword(@Body('email') email: string) {
+    return this.authService.forgotPassword(email);
+  }
+
+  @Public()
+  @Post('reset-password')
+  resetPassword(@Body() credentials: ResetPasswordAuthDto) {
+    return this.authService.resetPassword(credentials);
   }
 }

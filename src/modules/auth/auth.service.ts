@@ -10,6 +10,9 @@ import otpGenerator from 'otp-generator';
 import { MailService } from '../mail/mail.service';
 import { VerifyOtpAuthDto } from './dto/verify-otp-auth.dto';
 import { JwtService } from '@nestjs/jwt';
+import { ResetPasswordAuthDto } from './dto/reset-password.auth.dto';
+import crypto from 'crypto';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AuthService {
@@ -17,6 +20,7 @@ export class AuthService {
     private prismaService: PrismaService,
     private jwtService: JwtService,
     private mailService: MailService,
+    private configService: ConfigService,
   ) {}
 
   async login(credentials: LoginAuthDto) {
@@ -123,5 +127,84 @@ export class AuthService {
     await this.mailService.sendOtp({ email: checkUserExist.email, otp });
 
     return { message: 'OTP resent to email' };
+  }
+
+  async forgotPassword(email: string) {
+    const checkUserExist = await this.prismaService.users.findFirst({
+      where: { email },
+    });
+
+    // Don't reveal if email exists or not (security best practice)
+    if (!checkUserExist) {
+      return {
+        message: 'If this email exists, a password reset link has been sent',
+      };
+    }
+
+    // Generate a secure reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(resetToken)
+      .digest('hex');
+
+    await this.prismaService.users.update({
+      where: { id: checkUserExist.id },
+      data: {
+        passwordResetToken: hashedToken,
+        passwordResetExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+      },
+    });
+
+    // The raw token goes in the link, the hashed one is stored in DB
+    const resetLink = `${this.configService.get<string>('FRONTEND_URL')}/reset-password?token=${resetToken}&email=${email}`;
+
+    await this.mailService.sendForgotPassword({
+      email,
+      resetLink,
+      name: `${checkUserExist.firstName} ${checkUserExist.lastName}`,
+    });
+
+    return {
+      message: 'If this email exists, a password reset link has been sent',
+    };
+  }
+
+  async resetPassword(credentials: ResetPasswordAuthDto) {
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(credentials.token)
+      .digest('hex');
+
+    const checkUserExist = await this.prismaService.users.findFirst({
+      where: {
+        email: credentials.email,
+        passwordResetToken: hashedToken,
+      },
+    });
+    if (!checkUserExist)
+      throw new UnauthorizedException('Invalid or expired reset link');
+
+    if (
+      !checkUserExist.passwordResetExpiresAt ||
+      checkUserExist.passwordResetExpiresAt < new Date()
+    ) {
+      throw new UnauthorizedException(
+        'Reset link has expired. Please request a new one',
+      );
+    }
+
+    const hashedPassword = await bcrypt.hash(credentials.newPassword, 10);
+
+    await this.prismaService.users.update({
+      where: { id: checkUserExist.id },
+      data: {
+        password: hashedPassword,
+        passwordResetToken: null,
+        passwordResetExpiresAt: null,
+      },
+    });
+
+    return { message: 'Password reset successfully' };
   }
 }
