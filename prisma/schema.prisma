@@ -62,16 +62,21 @@ model StoreSyncRecord {
 enum Role {
   HR
   SUPERADMIN
+  MP
 }
 
 model Users {
-  id         String   @id @default(cuid(2))
-  email      String   @unique
-  password   String
-  firstName  String
-  middleName String
-  lastName   String
-  role       Role
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id                     String    @id @default(cuid(2))
+  email                  String    @unique
+  password               String
+  firstName              String
+  middleName             String
+  lastName               String
+  role                   Role
+  otp                    String?
+  otpExpiresAt           DateTime?
+  passwordResetToken     String?
+  passwordResetExpiresAt DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 }
