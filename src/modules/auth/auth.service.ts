@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import * as bcrypt from 'bcrypt';
@@ -83,5 +87,41 @@ export class AuthService {
     return {
       accessToken: jwtToken,
     };
+  }
+
+  async resendOtp(email: string) {
+    const checkUserExist = await this.prismaService.users.findFirst({
+      where: { email },
+    });
+    if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
+
+    if (!checkUserExist.otpExpiresAt) {
+      throw new BadRequestException('No OTP request found. Please login first');
+    }
+
+    if (
+      checkUserExist.otpExpiresAt > new Date() &&
+      checkUserExist.otpExpiresAt < new Date(Date.now() + 4 * 60 * 1000)
+    ) {
+      throw new BadRequestException('Please wait before requesting a new OTP');
+    }
+
+    const otp = otpGenerator.generate(6, {
+      upperCaseAlphabets: false,
+      lowerCaseAlphabets: false,
+      specialChars: false,
+    });
+
+    await this.prismaService.users.update({
+      where: { id: checkUserExist.id },
+      data: {
+        otp,
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+
+    await this.mailService.sendOtp({ email: checkUserExist.email, otp });
+
+    return { message: 'OTP resent to email' };
   }
 }

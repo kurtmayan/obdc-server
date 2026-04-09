@@ -22,6 +22,12 @@ export class AuthController {
     return this.authService.verifyOtp(credentials);
   }
 
+  @Public()
+  @Post('resend-otp')
+  resendOtp(@Body('email') email: string) {
+    return this.authService.resendOtp(email);
+  }
+
   @Get('validate')
   validateToken(@Req() req: Request & { user: JwtPayload }) {
     return req.user;
