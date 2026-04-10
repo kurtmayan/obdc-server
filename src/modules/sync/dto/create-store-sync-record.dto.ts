@@ -1,11 +1,11 @@
 export type Attendance = {
-  name: string;
-  user_id: string;
-  logDate: string;
-  logType: number;
+  employee_name: string;
+  employee_id: string;
+  log_date: string;
+  punch: number;
 };
 
 export class CreateStoreSyncRecord {
-  device_id: string;
+  'device-id': string;
   attendance: Attendance[];
 }
