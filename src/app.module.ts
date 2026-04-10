@@ -16,6 +16,7 @@ import { AuthGuard } from './modules/auth/auth.guard';
 import { MailModule } from './modules/mail/mail.module';
 import { UsersModule } from './modules/users/users.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
+import { ExcelModule } from './modules/excel/excel.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { StatisticsModule } from './modules/statistics/statistics.module';
     MailModule,
     UsersModule,
     StatisticsModule,
+    ExcelModule,
   ],
   controllers: [AppController, StoreController],
   providers: [

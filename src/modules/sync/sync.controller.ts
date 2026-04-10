@@ -1,4 +1,11 @@
-import { Body, Controller, Get, Post, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Res,
+  StreamableFile,
+} from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
@@ -16,13 +23,17 @@ export class SyncController {
   @Public()
   @Get('export')
   async exportAttendance(@Res() res) {
-    const csv = await this.service.export();
-    const todayDate = new Date();
-    res.header('Content-Type', 'text/csv');
-    res.header(
-      'Content-Disposition',
-      `attachment; filename="attendance-export-${todayDate}.csv"`,
+    const buffer = await this.service.export();
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
-    return res.send(csv);
+
+    res.setHeader('Content-Disposition', 'attachment; filename="export.xlsx"');
+
+    res.setHeader('Content-Length', buffer.length);
+
+    return res.end(buffer);
   }
 }

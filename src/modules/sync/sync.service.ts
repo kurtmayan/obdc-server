@@ -7,6 +7,8 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
+import * as ExcelJS from 'exceljs';
+import { parseDateTime } from 'src/lib/formatDate';
 
 @Injectable()
 export class SyncService {
@@ -60,6 +62,17 @@ export class SyncService {
   }
 
   async export() {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1');
+
+    sheet.columns = [
+      { header: 'EMPID', key: 'employeeID' },
+      { header: 'Log Date', key: 'logDate' },
+      { header: 'Log Time', key: 'logTime' },
+      { header: 'Status', key: 'status' },
+      { header: 'Location', key: 'location' },
+    ];
+
     const attendanceRecords = await this.prisma.attendanceRecord.findMany({
       include: {
         storeSyncRecords: {
@@ -74,15 +87,43 @@ export class SyncService {
       throw new NotFoundException('No attendance records found');
     }
 
-    const csvHeader =
-      'User ID, Employee Name,Log Date,Log Type,Store Name,Store Region,Sync Date\n';
-    const csvRows = attendanceRecords
-      .map((record) => {
-        const store = record.storeSyncRecords.store;
-        return `${record.userId},${record.employeeName},${record.logDate.toISOString()},${record.logType},${store.name},${store.region},${record.storeSyncRecords.syncDate.toISOString()}`;
-      })
-      .join('\n');
+    const transformedAttendanceRecord = attendanceRecords.map((record) => {
+      const { date, time } = parseDateTime(record.logDate);
+      return {
+        employeeID: record.userId,
+        logDate: date,
+        logTime: time,
+        status: record.logType == 0 ? '1' : record.logType == 1 ? '0' : '0',
+        location: record.storeSyncRecords.store.exactAddress,
+      };
+    });
 
-    return csvHeader + csvRows;
+    for (const rowData of transformedAttendanceRecord) {
+      sheet.addRow(rowData);
+    }
+
+    sheet.getRow(1).eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' },
+      };
+    });
+
+    sheet.columns.forEach((column) => {
+      let maxLength = 10;
+      if (column.eachCell) {
+        column.eachCell({ includeEmpty: true }, (cell) => {
+          const cellValue = cell.value ? cell.value.toString() : '';
+          maxLength = Math.max(maxLength, cellValue.length + 2);
+        });
+      }
+
+      column.width = Math.min(maxLength, 50);
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 }
