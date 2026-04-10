@@ -15,6 +15,7 @@ import { RolesGuard } from './modules/roles/roles.guard';
 import { AuthGuard } from './modules/auth/auth.guard';
 import { MailModule } from './modules/mail/mail.module';
 import { UsersModule } from './modules/users/users.module';
+import { StatisticsModule } from './modules/statistics/statistics.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { UsersModule } from './modules/users/users.module';
     AuthModule,
     MailModule,
     UsersModule,
+    StatisticsModule,
   ],
   controllers: [AppController, StoreController],
   providers: [

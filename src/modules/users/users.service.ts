@@ -48,4 +48,19 @@ export class UsersService {
   private generateDefaultPassword(): string {
     return Math.random().toString(36).slice(-8);
   }
+
+  async getAllUsers() {
+    return await this.prismaService.users.findMany({
+      select: {
+        id: true,
+        firstName: true,
+        middleName: true,
+        lastName: true,
+        contactNumber: true,
+        email: true,
+        status: true,
+        role: true,
+      },
+    });
+  }
 }

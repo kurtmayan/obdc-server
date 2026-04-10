@@ -17,7 +17,7 @@ export class SyncService {
   async storeSyncRecord(data: CreateStoreSyncRecord) {
     const device = await this.prisma.devices.findFirst({
       where: {
-        serialNumber: data.device_id,
+        serialNumber: data['device-id'],
       },
       select: {
         store: true,
@@ -37,10 +37,10 @@ export class SyncService {
 
     const transformedData = data.attendance.map((log) => {
       return {
-        employeeName: log.name,
-        userId: log.user_id,
-        logDate: new Date(log.logDate),
-        logType: log.logType,
+        employeeName: log.employee_name,
+        userId: log.employee_id,
+        logDate: new Date(log.log_date),
+        logType: log.punch,
         storeSyncRecordID: storeSyncRecord.id,
       };
     });

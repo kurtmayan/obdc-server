@@ -28,12 +28,19 @@ export class StoreService {
   }
 
   async findAll() {
-    return await this.prismaService.stores.findMany();
+    return await this.prismaService.stores.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
   }
 
   async findOne(id: string) {
     const response = await this.prismaService.stores.findFirst({
       where: { id },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
     if (!response) throw new NotFoundException('Store not found');
     return response;

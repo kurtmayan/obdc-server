@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { InviteUsersDto } from './dto/invite-users.dto';
 
@@ -9,5 +9,10 @@ export class UsersController {
   @Post('invite-users')
   inviteUsers(@Body() credentials: InviteUsersDto) {
     return this.usersService.inviteUsers(credentials);
+  }
+
+  @Get('/')
+  getAllUsers() {
+    return this.usersService.getAllUsers();
   }
 }

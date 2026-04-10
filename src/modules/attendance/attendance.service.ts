@@ -7,6 +7,9 @@ export class AttendanceService {
 
   async getAllData() {
     return await this.prismaService.storeSyncRecord.findMany({
+      orderBy: {
+        syncDate: 'desc',
+      },
       include: {
         attendanceRecord: true,
         store: {
@@ -20,6 +23,9 @@ export class AttendanceService {
 
   async getGeneralRecord() {
     return await this.prismaService.stores.findMany({
+      orderBy: {
+        createdAt: 'desc',
+      },
       include: {
         storeSyncRecords: {
           orderBy: {
@@ -39,6 +45,9 @@ export class AttendanceService {
 
   async getStoreRecord(id: string) {
     const storeSync = await this.prismaService.storeSyncRecord.findMany({
+      orderBy: {
+        syncDate: 'desc',
+      },
       where: {
         storesId: id,
       },
@@ -59,6 +68,9 @@ export class AttendanceService {
 
   async getStoreDetailedRecord(storeId: string, syncRecordId: string) {
     return await this.prismaService.storeSyncRecord.findFirst({
+      orderBy: {
+        syncDate: 'desc',
+      },
       where: {
         id: syncRecordId,
         storesId: storeId,
