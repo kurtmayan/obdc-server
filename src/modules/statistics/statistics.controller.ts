@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { StatisticsService } from './statistics.service';
 
 @Controller('statistics')
@@ -6,16 +6,25 @@ export class StatisticsController {
   constructor(private readonly statisticsService: StatisticsService) {}
 
   @Get()
-  async getStatistics() {
+  async getStatistics(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const dateRange = this.statisticsService.parseDateRange(startDate, endDate);
     return {
       totalStores: await this.statisticsService.getTotalStores(),
-      totalStoreSynced: await this.statisticsService.getTotalStoreSynced(),
-      totalStoreUnsynced: await this.statisticsService.getTotalStoreUnsynced(),
+      totalStoreSynced:
+        await this.statisticsService.getTotalStoreSynced(dateRange),
+      totalStoreUnsynced:
+        await this.statisticsService.getTotalStoreUnsynced(dateRange),
     };
   }
 
   @Get('datasets')
-  getDatasets() {
-    return this.statisticsService.getStoreSyncChartDataLast5Days();
+  getDatasets(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.statisticsService.getStoreSyncChartData(startDate, endDate);
   }
 }

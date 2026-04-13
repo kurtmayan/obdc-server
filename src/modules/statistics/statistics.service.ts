@@ -9,96 +9,102 @@ export class StatisticsService {
     return this.prismaService.stores.count();
   }
 
-  async getTotalStoreSynced() {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-
+  async getTotalStoreSynced(dateRange: { start: Date; end: Date }) {
     const syncedStores = await this.prismaService.storeSyncRecord.groupBy({
       by: ['storesId'],
       where: {
         syncDate: {
-          gte: startOfDay,
-          lte: endOfDay,
+          gte: dateRange.start,
+          lte: dateRange.end,
         },
       },
     });
 
-    // The total unique stores synced today
     return syncedStores.length;
   }
 
-  async getTotalStoreUnsynced() {
+  async getTotalStoreUnsynced(dateRange: { start: Date; end: Date }) {
     const total =
-      (await this.getTotalStores()) - (await this.getTotalStoreSynced());
+      (await this.getTotalStores()) -
+      (await this.getTotalStoreSynced(dateRange));
     return total;
   }
 
-  private getDayRange(date: Date) {
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
-    return { start, end };
-  }
+  async getStoreSyncChartData(startDate?: string, endDate?: string) {
+    const { start: resolvedStart, end: resolvedEnd } = this.parseDateRange(
+      startDate,
+      endDate,
+      6,
+    );
 
-  async getStoreSyncChartDataLast5Days() {
-    const today = new Date();
-    const fiveDaysAgo = new Date();
-    fiveDaysAgo.setDate(today.getDate() - 4); // include today
+    const [records, totalStores] = await Promise.all([
+      this.prismaService.storeSyncRecord.findMany({
+        where: {
+          syncDate: {
+            gte: resolvedStart,
+            lte: resolvedEnd,
+          },
+        },
+        select: {
+          storesId: true,
+          syncDate: true,
+        },
+      }),
+      this.prismaService.stores.count(),
+    ]);
 
-    // Fetch all sync records in last 5 days
-    const records = await this.prismaService.storeSyncRecord.findMany({
-      where: {
-        syncDate: { gte: this.getDayRange(fiveDaysAgo).start },
-      },
-      select: {
-        storesId: true,
-        syncDate: true,
-      },
-    });
-
-    // Get total stores once
-    const totalStores = await this.prismaService.stores.count();
-
-    // Initialize data map
-    const chartDataMap: Record<
-      string,
-      { date: string; synced: number; pending: number }
-    > = {};
-
-    for (let i = 0; i < 5; i++) {
-      const day = new Date();
-      day.setDate(today.getDate() - i);
-      const dateStr = day.toISOString().split('T')[0]; // YYYY-MM-DD
-
-      chartDataMap[dateStr] = {
-        date: dateStr,
-        synced: 0,
-        pending: totalStores, // start with total stores
-      };
-    }
-
-    // Aggregate synced stores per day (unique stores only)
+    // Aggregate unique synced stores per day
     const dailyStoreSet: Record<string, Set<string>> = {};
-
     for (const rec of records) {
-      const dateStr = rec.syncDate.toISOString().split('T')[0];
+      const dateStr = this.toLocalDateStr(rec.syncDate);
       if (!dailyStoreSet[dateStr]) dailyStoreSet[dateStr] = new Set();
       dailyStoreSet[dateStr].add(rec.storesId);
     }
 
-    // Fill chart data
-    for (const [date, storeSet] of Object.entries(dailyStoreSet)) {
-      chartDataMap[date].synced = storeSet.size;
-      chartDataMap[date].pending = totalStores - storeSet.size;
-    }
+    // Only return days that have actual records
+    return Object.entries(dailyStoreSet)
+      .map(([date, storeSet]) => ({
+        date,
+        synced: storeSet.size,
+        pending: totalStores - storeSet.size,
+      }))
+      .sort((a, b) => (a.date > b.date ? 1 : -1));
+  }
 
-    // Return sorted array (oldest first)
-    return Object.values(chartDataMap).sort((a, b) =>
-      a.date > b.date ? 1 : -1,
-    );
+  parseDateRange(
+    startDate?: string,
+    endDate?: string,
+    defaultDaysBack: number = 0,
+  ): { start: Date; end: Date } {
+    // resolvedEnd is always based on a fresh Date()
+    const resolvedEnd = endDate ? this.parseLocalDate(endDate) : new Date();
+
+    // resolvedStart is based on a separate fresh Date()
+    const resolvedStart = startDate
+      ? this.parseLocalDate(startDate)
+      : (() => {
+          const d = new Date(); // fresh Date, not reusing resolvedEnd
+          d.setDate(d.getDate() - defaultDaysBack);
+          return d;
+        })();
+
+    resolvedStart.setHours(0, 0, 0, 0);
+    resolvedEnd.setHours(23, 59, 59, 999);
+
+    return { start: resolvedStart, end: resolvedEnd };
+  }
+
+  // string "YYYY-MM-DD" -> Date in local time
+  private parseLocalDate(dateStr: string): Date {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  // Date -> string "YYYY-MM-DD" in local time
+  private toLocalDateStr(date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 }
