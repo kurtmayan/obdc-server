@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -61,7 +62,20 @@ export class SyncService {
     return { success: true, message: 'Record Synced', data: attendanceRecord };
   }
 
-  async export() {
+  async export(startDate?: string, endDate?: string) {
+    const start = startDate ? new Date(startDate) : new Date(0);
+    start.setHours(0, 0, 0, 0); // ✅ 12:00 AM start of day
+
+    const end = endDate ? new Date(endDate) : new Date();
+    end.setHours(23, 59, 59, 999); // ✅ 11:59 PM end of day
+
+    console.log(
+      'Querying from:',
+      start.toISOString(),
+      'to:',
+      end.toISOString(),
+    );
+
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Sheet1');
 
@@ -74,6 +88,12 @@ export class SyncService {
     ];
 
     const attendanceRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
       include: {
         storeSyncRecords: {
           include: {

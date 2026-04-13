@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Res,
   StreamableFile,
 } from '@nestjs/common';
@@ -22,8 +23,12 @@ export class SyncController {
 
   @Public()
   @Get('export')
-  async exportAttendance(@Res() res) {
-    const buffer = await this.service.export();
+  async exportAttendance(
+    @Res() res,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    const buffer = await this.service.export(startDate, endDate);
 
     res.setHeader(
       'Content-Type',
