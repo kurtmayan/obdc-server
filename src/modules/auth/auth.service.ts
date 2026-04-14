@@ -161,7 +161,7 @@ export class AuthService {
     });
 
     // The raw token goes in the link, the hashed one is stored in DB
-    const resetLink = `${this.configService.get<string>('FRONTEND_URL')}/reset-password?token=${resetToken}&email=${email}`;
+    const resetLink = `${this.configService.get<string>('FRONTEND_URL')}/auth/update-password?token=${resetToken}&email=${email}`;
 
     await this.mailService.sendForgotPassword({
       email,
