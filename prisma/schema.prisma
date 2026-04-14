@@ -13,20 +13,45 @@ datasource db {
   provider = "postgresql"
 }
 
+enum Division {
+  rtm_operations
+  head_office
+  warehouse
+}
+
+enum Cluster {
+  mindanao_1
+  mindanao_2
+  visayas_2
+  visayas_1
+  ncr_north_east
+  ncr_south_calapa
+  south_luzon
+  north_central_luzon
+  head_office
+  warehouse
+}
+
+enum Status {
+  active
+  inactive
+}
+
 model Stores {
   id               String            @id @default(cuid(2))
-  code             String?
-  name             String
-  region           String
-  province         String
-  municipality     String
-  barangay         String
-  exactAddress     String
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   devices          Devices[]
   storeSyncRecords StoreSyncRecord[]
-  contactInfo      String?
+
+  code          String
+  name          String
+  division      Division
+  location      String
+  cluster       Cluster
+  contactPerson String
+  contactNumber String?
+  status        Status
 }
 
 model Devices {

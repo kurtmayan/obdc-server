@@ -114,7 +114,7 @@ export class SyncService {
         logDate: date,
         logTime: time,
         status: record.logType == 0 ? '1' : record.logType == 1 ? '0' : '0',
-        location: record.storeSyncRecords.store.exactAddress,
+        location: record.storeSyncRecords.store.location,
       };
     });
 
