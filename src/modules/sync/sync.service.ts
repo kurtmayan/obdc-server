@@ -9,7 +9,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
-import { parseDateTime } from 'src/lib/formatDate';
+import { exportParseDateTime, parseDateTime } from 'src/lib/formatDate';
 
 @Injectable()
 export class SyncService {
@@ -29,37 +29,55 @@ export class SyncService {
 
     if (!device) throw new NotFoundException();
 
-    const storeSyncRecord = await this.prisma.storeSyncRecord.create({
-      data: {
-        storesId: device.store.id,
-      },
-    });
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const storeSyncRecord = await tx.storeSyncRecord.create({
+          data: {
+            storesId: device.store.id,
+          },
+        });
 
-    if (!storeSyncRecord)
-      throw new ConflictException('Sync record not created!');
+        const transformedData = data.attendance.map((log) => ({
+          employeeName: log.employee_name,
+          userId: log.employee_id,
+          logDate: new Date(log.log_date),
+          logType: log.punch,
+          storeSyncRecordID: storeSyncRecord.id,
+        }));
 
-    const transformedData = data.attendance.map((log) => {
+        const CHUNK_SIZE = 500;
+        const chunks = Array.from(
+          { length: Math.ceil(transformedData.length / CHUNK_SIZE) },
+          (_, i) => transformedData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+        );
+
+        const results = await Promise.all(
+          chunks.map((chunk) =>
+            tx.attendanceRecord.createMany({ data: chunk }),
+          ),
+        );
+
+        const totalCount = results.reduce((sum, r) => sum + r.count, 0);
+
+        return { storeSyncRecord, totalCount };
+      });
+
+      this.logger.log(`Inserted ${result.totalCount} attendance records`);
+
       return {
-        employeeName: log.employee_name,
-        userId: log.employee_id,
-        logDate: new Date(log.log_date),
-        logType: log.punch,
-        storeSyncRecordID: storeSyncRecord.id,
+        success: true,
+        message: 'Record Synced',
+        data: { count: result.totalCount },
       };
-    });
-
-    const attendanceRecord = await this.prisma.attendanceRecord.createMany({
-      data: transformedData,
-    });
-
-    if (!attendanceRecord)
+    } catch (error) {
+      this.logger.error(
+        'Failed to sync records, transaction rolled back',
+        error,
+      );
       throw new UnprocessableEntityException(
         "There's an error while saving records in the database!",
       );
-
-    this.logger.log(attendanceRecord);
-
-    return { success: true, message: 'Record Synced', data: attendanceRecord };
+    }
   }
 
   async export(startDate?: string, endDate?: string) {
@@ -108,11 +126,14 @@ export class SyncService {
     }
 
     const transformedAttendanceRecord = attendanceRecords.map((record) => {
-      const { date, time } = parseDateTime(record.logDate);
+      console.log('=====================');
+      console.log(record);
+      console.log('=====================');
+      const { date, time } = exportParseDateTime(record.logDate);
       return {
         employeeID: record.userId,
         logDate: date,
-        logTime: time,
+        logTime: `${date} ${time}`,
         status: record.logType == 0 ? '1' : record.logType == 1 ? '0' : '0',
         location: record.storeSyncRecords.store.name,
       };
