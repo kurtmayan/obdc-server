@@ -17,17 +17,25 @@ export class SyncService {
 
   private logger = new Logger(SyncService.name);
 
-  async storeSyncRecord(data: CreateStoreSyncRecord) {
+  async storeSyncRecord(payload: CreateStoreSyncRecord) {
     const device = await this.prisma.devices.findFirst({
       where: {
-        serialNumber: data['device-id'],
+        serialNumber: payload['device-id'],
       },
       select: {
         store: true,
       },
     });
 
-    if (!device) throw new NotFoundException();
+    if (!device) throw new NotFoundException('Device not registered!');
+
+    const syncedData = await this.prisma.attendanceRecord.findMany();
+
+    const syncedDataSet = new Set(syncedData.map((record) => record.id));
+
+    const data = payload.attendance.filter(
+      (record) => !syncedDataSet.has(record.id),
+    );
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
@@ -37,12 +45,13 @@ export class SyncService {
           },
         });
 
-        const transformedData = data.attendance.map((log) => ({
+        const transformedData = data.map((log) => ({
           employeeName: log.employee_name,
           userId: log.employee_id,
           logDate: new Date(log.log_date),
           logType: log.punch,
           storeSyncRecordID: storeSyncRecord.id,
+          id: log.id,
         }));
 
         const CHUNK_SIZE = 500;

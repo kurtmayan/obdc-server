@@ -3,6 +3,7 @@ export type Attendance = {
   employee_id: string;
   log_date: string;
   punch: number;
+  id: string;
 };
 
 export class CreateStoreSyncRecord {
