@@ -18,41 +18,92 @@ export class SyncService {
   private logger = new Logger(SyncService.name);
 
   async storeSyncRecord(payload: CreateStoreSyncRecord) {
-    const device = await this.prisma.devices.findFirst({
+    const device_ids = payload.sync_record.map((r) => r.device_id);
+
+    const attendance = await this.prisma.attendanceRecord.findMany({
       where: {
-        serialNumber: payload['device-id'],
+        storeSyncRecords: {
+          store: {
+            devices: {
+              some: {
+                serialNumber: {
+                  in: device_ids,
+                },
+              },
+            },
+          },
+        },
       },
       select: {
-        store: true,
+        id: true,
       },
     });
 
-    if (!device) throw new NotFoundException('Device not registered!');
+    const syncedDataSet = new Set(attendance.map((record) => record.id));
 
-    const syncedData = await this.prisma.attendanceRecord.findMany();
+    const devices = await this.prisma.devices.findMany({
+      where: {
+        serialNumber: {
+          in: device_ids,
+        },
+      },
+      select: {
+        id: true,
+        serialNumber: true,
+        storesId: true,
+      },
+    });
 
-    const syncedDataSet = new Set(syncedData.map((record) => record.id));
-
-    const data = payload.attendance.filter(
-      (record) => !syncedDataSet.has(record.id),
-    );
+    if (devices.length === 0) {
+      throw new NotFoundException('No devices found!');
+    }
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
-        const storeSyncRecord = await tx.storeSyncRecord.create({
-          data: {
-            storesId: device.store.id,
-          },
-        });
+        const uniqueStoreIds = [...new Set(devices.map((d) => d.storesId))];
 
-        const transformedData = data.map((log) => ({
-          employeeName: log.employee_name,
-          userId: log.employee_id,
-          logDate: new Date(log.log_date),
-          logType: log.punch,
-          storeSyncRecordID: storeSyncRecord.id,
-          id: log.id,
-        }));
+        const storeSyncRecords = await Promise.all(
+          uniqueStoreIds.map((storesId) =>
+            tx.storeSyncRecord.create({
+              data: { storesId },
+            }),
+          ),
+        );
+
+        const storeToSyncMap = new Map(
+          uniqueStoreIds.map((storeId, index) => [
+            storeId,
+            storeSyncRecords[index].id,
+          ]),
+        );
+
+        const deviceToSyncMap = new Map(
+          devices.map((device) => [
+            device.serialNumber,
+            storeToSyncMap.get(device.storesId),
+          ]),
+        );
+
+        const transformedData = payload.sync_record.flatMap((record) => {
+          const syncId = deviceToSyncMap.get(record.device_id);
+
+          if (!syncId) {
+            throw new BadRequestException(
+              `Device not found: ${record.device_id}`,
+            );
+          }
+
+          return record.attendance_record
+            .filter((log) => !syncedDataSet.has(log.id))
+            .map((log) => ({
+              employeeName: log.employee_name,
+              userId: log.employee_id,
+              logDate: new Date(log.log_date),
+              logType: log.punch,
+              storeSyncRecordID: syncId,
+              id: log.id,
+            }));
+        });
 
         const CHUNK_SIZE = 500;
         const chunks = Array.from(
@@ -68,7 +119,7 @@ export class SyncService {
 
         const totalCount = results.reduce((sum, r) => sum + r.count, 0);
 
-        return { storeSyncRecord, totalCount };
+        return { totalCount };
       });
 
       this.logger.log(`Inserted ${result.totalCount} attendance records`);
@@ -79,10 +130,18 @@ export class SyncService {
         data: { count: result.totalCount },
       };
     } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
       this.logger.error(
         'Failed to sync records, transaction rolled back',
         error,
       );
+
       throw new UnprocessableEntityException(
         "There's an error while saving records in the database!",
       );

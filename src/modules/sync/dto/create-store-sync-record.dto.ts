@@ -6,7 +6,11 @@ export type Attendance = {
   id: string;
 };
 
+export type SyncRecord = {
+  device_id: string;
+  attendance_record: Attendance[];
+};
+
 export class CreateStoreSyncRecord {
-  'device-id': string;
-  attendance: Attendance[];
+  sync_record: SyncRecord[];
 }
