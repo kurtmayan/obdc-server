@@ -150,17 +150,10 @@ export class SyncService {
 
   async export(startDate?: string, endDate?: string) {
     const start = startDate ? new Date(startDate) : new Date(0);
-    start.setHours(0, 0, 0, 0); // ✅ 12:00 AM start of day
+    start.setUTCHours(0, 0, 0, 0); // ✅ 12:00 AM start of day
 
     const end = endDate ? new Date(endDate) : new Date();
-    end.setHours(23, 59, 59, 999); // ✅ 11:59 PM end of day
-
-    console.log(
-      'Querying from:',
-      start.toISOString(),
-      'to:',
-      end.toISOString(),
-    );
+    end.setUTCHours(23, 59, 59, 999); // ✅ 11:59 PM end of day
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Sheet1');
@@ -175,7 +168,7 @@ export class SyncService {
 
     const attendanceRecords = await this.prisma.attendanceRecord.findMany({
       where: {
-        createdAt: {
+        logDate: {
           gte: start,
           lte: end,
         },
@@ -190,13 +183,11 @@ export class SyncService {
     });
 
     if (!attendanceRecords.length) {
-      throw new NotFoundException('No attendance records found');
+      const buffer = await workbook.xlsx.writeBuffer();
+      return Buffer.from(buffer);
     }
 
     const transformedAttendanceRecord = attendanceRecords.map((record) => {
-      console.log('=====================');
-      console.log(record);
-      console.log('=====================');
       const { date, time } = exportParseDateTime(record.logDate);
       return {
         employeeID: record.userId,
@@ -228,7 +219,6 @@ export class SyncService {
           maxLength = Math.max(maxLength, cellValue.length + 2);
         });
       }
-
       column.width = Math.min(maxLength, 50);
     });
 
