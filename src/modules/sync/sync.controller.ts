@@ -27,17 +27,18 @@ export class SyncController {
     @Res() res,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
+    @Query('format') format?: 'xlsx' | 'csv',
   ) {
-    console.log('Exporting attendance from', startDate, 'to', endDate);
-    const buffer = await this.service.export(startDate, endDate);
+    const buffer = await this.service.export(startDate, endDate, format);
 
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
+    const isCSV = format === 'csv';
+    const contentType = isCSV
+      ? 'text/csv'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const filename = isCSV ? 'attendance-export.csv' : 'attendance-export.xlsx';
 
-    res.setHeader('Content-Disposition', 'attachment; filename="export.xlsx"');
-
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
 
     return res.end(buffer);

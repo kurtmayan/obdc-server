@@ -148,24 +148,21 @@ export class SyncService {
     }
   }
 
-  async export(startDate?: string, endDate?: string) {
+  async export(startDate?: string, endDate?: string, format: string = 'xlsx') {
+    return this.generateExport(startDate, endDate, format);
+  }
+
+  private async generateExport(
+    startDate?: string,
+    endDate?: string,
+    format: string = 'xlsx',
+  ) {
     // Parse dates properly - create date at midnight UTC
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000Z`)
       : new Date(0);
 
     const end = endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date();
-
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Sheet1');
-
-    sheet.columns = [
-      { header: 'EMPID', key: 'employeeID' },
-      { header: 'Log Date', key: 'logDate' },
-      { header: 'Log Time', key: 'logTime' },
-      { header: 'Status', key: 'status' },
-      { header: 'Location', key: 'location' },
-    ];
 
     const attendanceRecords = await this.prisma.attendanceRecord.findMany({
       where: {
@@ -187,28 +184,71 @@ export class SyncService {
       },
     });
 
-    if (!attendanceRecords.length) {
-      const buffer = await workbook.xlsx.writeBuffer();
-      return Buffer.from(buffer);
-    }
-
-    // Transform and add rows
-    const columnWidths = [10, 10, 10, 10, 10];
-
-    attendanceRecords.forEach((record) => {
+    // Transform records to common format
+    const transformedData = attendanceRecords.map((record) => {
       const { date, time } = exportParseDateTime(record.logDate);
-      const rowData = {
-        employeeID: record.userId,
+      return {
+        employeeID: String(record.userId),
         logDate: date,
         logTime: `${date} ${time}`,
         status: record.logType === 0 ? '1' : '0',
         location: record.storeSyncRecords.store.name,
       };
+    });
 
-      sheet.addRow(rowData);
+    // Export based on format
+    if (format === 'csv') {
+      return this.exportAsCSV(transformedData);
+    } else {
+      return this.exportAsExcel(transformedData);
+    }
+  }
+
+  private exportAsCSV(data: any[]): Buffer {
+    const headers = ['EMPID', 'Log Date', 'Log Time', 'Status', 'Location'];
+    const rows = [headers];
+
+    data.forEach((record) => {
+      rows.push([
+        record.employeeID,
+        record.logDate,
+        record.logTime,
+        record.status,
+        record.location,
+      ]);
+    });
+
+    const csvContent = rows
+      .map((row) => row.map((cell) => `"${cell}"`).join(','))
+      .join('\n');
+
+    return Buffer.from(csvContent, 'utf-8');
+  }
+
+  private async exportAsExcel(data: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1');
+
+    sheet.columns = [
+      { header: 'EMPID', key: 'employeeID' },
+      { header: 'Log Date', key: 'logDate' },
+      { header: 'Log Time', key: 'logTime' },
+      { header: 'Status', key: 'status' },
+      { header: 'Location', key: 'location' },
+    ];
+
+    if (data.length === 0) {
+      const buffer = await workbook.xlsx.writeBuffer();
+      return Buffer.from(buffer);
+    }
+
+    const columnWidths = [10, 10, 10, 10, 10];
+
+    data.forEach((record) => {
+      sheet.addRow(record);
 
       // Track max column widths for better formatting
-      Object.values(rowData).forEach((value, index) => {
+      Object.values(record).forEach((value, index) => {
         const length = String(value).length + 2;
         columnWidths[index] = Math.min(
           Math.max(columnWidths[index], length),
