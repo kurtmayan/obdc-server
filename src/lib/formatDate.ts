@@ -8,8 +8,14 @@ export function parseDateTime(date: Date) {
 }
 
 export function exportParseDateTime(date: Date) {
+  const iso = date.toISOString();
+  // Extract date (YYYY-MM-DD) and time (HH:mm:ss) from ISO string
+  const [datePart, timePart] = iso.split('T');
+  const [year, month, day] = datePart.split('-');
+  const time = timePart.substring(0, 8); // HH:mm:ss
+
   return {
-    date: format(date, 'MM/dd/yyyy'),
-    time: format(date, 'HH:mm:ss'),
+    date: `${month}/${day}/${year}`,
+    time,
   };
 }

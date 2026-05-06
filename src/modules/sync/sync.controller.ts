@@ -28,6 +28,7 @@ export class SyncController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
+    console.log('Exporting attendance from', startDate, 'to', endDate);
     const buffer = await this.service.export(startDate, endDate);
 
     res.setHeader(
