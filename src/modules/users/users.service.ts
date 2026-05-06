@@ -29,7 +29,7 @@ export class UsersService {
         role: credentials.role,
         contactNumber: credentials.contactNumber,
         password: hashedPassword,
-        status: 'ACTIVE',
+        status: 'PENDING',
       },
     });
     if (!data) {
