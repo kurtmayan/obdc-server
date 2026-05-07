@@ -148,20 +148,84 @@ export class SyncService {
     }
   }
 
-  async export(startDate?: string, endDate?: string) {
-    const start = startDate ? new Date(startDate) : new Date(0);
-    start.setHours(0, 0, 0, 0); // ✅ 12:00 AM start of day
+  async export(startDate?: string, endDate?: string, format: string = 'xlsx') {
+    return this.generateExport(startDate, endDate, format);
+  }
 
-    const end = endDate ? new Date(endDate) : new Date();
-    end.setHours(23, 59, 59, 999); // ✅ 11:59 PM end of day
+  private async generateExport(
+    startDate?: string,
+    endDate?: string,
+    format: string = 'xlsx',
+  ) {
+    // Parse dates properly - create date at midnight UTC
+    const start = startDate
+      ? new Date(`${startDate}T00:00:00.000Z`)
+      : new Date(0);
 
-    console.log(
-      'Querying from:',
-      start.toISOString(),
-      'to:',
-      end.toISOString(),
-    );
+    const end = endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date();
 
+    const attendanceRecords = await this.prisma.attendanceRecord.findMany({
+      where: {
+        logDate: {
+          gte: start,
+          lte: end,
+        },
+      },
+      include: {
+        storeSyncRecords: {
+          include: {
+            store: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Transform records to common format
+    const transformedData = attendanceRecords.map((record) => {
+      const { date, time } = exportParseDateTime(record.logDate);
+      return {
+        employeeID: String(record.userId),
+        logDate: date,
+        logTime: `${date} ${time}`,
+        status: record.logType === 0 ? '1' : '0',
+        location: record.storeSyncRecords.store.name,
+      };
+    });
+
+    // Export based on format
+    if (format === 'csv') {
+      return this.exportAsCSV(transformedData);
+    } else {
+      return this.exportAsExcel(transformedData);
+    }
+  }
+
+  private exportAsCSV(data: any[]): Buffer {
+    const headers = ['EMPID', 'Log Date', 'Log Time', 'Status', 'Location'];
+    const rows = [headers];
+
+    data.forEach((record) => {
+      rows.push([
+        record.employeeID,
+        record.logDate,
+        record.logTime,
+        record.status,
+        record.location,
+      ]);
+    });
+
+    const csvContent = rows
+      .map((row) => row.map((cell) => `"${cell}"`).join(','))
+      .join('\n');
+
+    return Buffer.from(csvContent, 'utf-8');
+  }
+
+  private async exportAsExcel(data: any[]): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Sheet1');
 
@@ -173,46 +237,30 @@ export class SyncService {
       { header: 'Location', key: 'location' },
     ];
 
-    const attendanceRecords = await this.prisma.attendanceRecord.findMany({
-      where: {
-        createdAt: {
-          gte: start,
-          lte: end,
-        },
-      },
-      include: {
-        storeSyncRecords: {
-          include: {
-            store: true,
-          },
-        },
-      },
-    });
-
-    if (!attendanceRecords.length) {
-      throw new NotFoundException('No attendance records found');
+    if (data.length === 0) {
+      const buffer = await workbook.xlsx.writeBuffer();
+      return Buffer.from(buffer);
     }
 
-    const transformedAttendanceRecord = attendanceRecords.map((record) => {
-      console.log('=====================');
-      console.log(record);
-      console.log('=====================');
-      const { date, time } = exportParseDateTime(record.logDate);
-      return {
-        employeeID: record.userId,
-        logDate: date,
-        logTime: `${date} ${time}`,
-        status: record.logType == 0 ? '1' : record.logType == 1 ? '0' : '0',
-        location: record.storeSyncRecords.store.name,
-      };
+    const columnWidths = [10, 10, 10, 10, 10];
+
+    data.forEach((record) => {
+      sheet.addRow(record);
+
+      // Track max column widths for better formatting
+      Object.values(record).forEach((value, index) => {
+        const length = String(value).length + 2;
+        columnWidths[index] = Math.min(
+          Math.max(columnWidths[index], length),
+          50,
+        );
+      });
     });
 
-    for (const rowData of transformedAttendanceRecord) {
-      sheet.addRow(rowData);
-    }
-
-    sheet.getRow(1).eachCell((cell) => {
-      cell.font = { bold: true };
+    // Format header row
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
@@ -220,16 +268,9 @@ export class SyncService {
       };
     });
 
-    sheet.columns.forEach((column) => {
-      let maxLength = 10;
-      if (column.eachCell) {
-        column.eachCell({ includeEmpty: true }, (cell) => {
-          const cellValue = cell.value ? cell.value.toString() : '';
-          maxLength = Math.max(maxLength, cellValue.length + 2);
-        });
-      }
-
-      column.width = Math.min(maxLength, 50);
+    // Apply optimized column widths
+    sheet.columns.forEach((column, index) => {
+      column.width = columnWidths[index];
     });
 
     const buffer = await workbook.xlsx.writeBuffer();
