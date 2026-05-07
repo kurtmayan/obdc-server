@@ -31,8 +31,10 @@ export class AuthService {
     });
     if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
 
-    if (checkUserExist.status !== 'ACTIVE' || !checkUserExist.password) {
-      throw new UnauthorizedException('User has not been activated');
+    if (!checkUserExist.password) {
+      throw new UnauthorizedException(
+        'User has not been set up with a password. Please contact administrator.',
+      );
     }
 
     const isMatch = await bcrypt.compare(
@@ -80,7 +82,7 @@ export class AuthService {
 
     await this.prismaService.users.update({
       where: { id: checkCredentialValid.id },
-      data: { otp: null, otpExpiresAt: null },
+      data: { otp: null, otpExpiresAt: null, status: 'ACTIVE' },
     });
 
     const payload = {
