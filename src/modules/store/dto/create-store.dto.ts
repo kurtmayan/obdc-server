@@ -25,8 +25,8 @@ export enum Status {
 }
 
 export class CreateStoreDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   code: string;
 
   @IsString()
@@ -43,13 +43,14 @@ export class CreateStoreDto {
   @IsEnum(Cluster)
   cluster: Cluster;
 
-  @IsString()
-  @IsNotEmpty()
-  contactPerson: string;
-
-  @IsString()
-  @IsNotEmpty()
   @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  contactPerson?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
   contactNumber?: string | undefined;
 
   @IsEnum(Status)

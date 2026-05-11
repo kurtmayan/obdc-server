@@ -44,12 +44,12 @@ model Stores {
   devices          Devices[]
   storeSyncRecords StoreSyncRecord[]
 
-  code          String
+  code          String?
   name          String
   division      Division
   location      String
   cluster       Cluster
-  contactPerson String
+  contactPerson String?
   contactNumber String?
   status        Status
 }
