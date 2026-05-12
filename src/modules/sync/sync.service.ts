@@ -186,7 +186,8 @@ export class SyncService {
 
     // Transform records to common format
     const transformedData = attendanceRecords.map((record) => {
-      const { date, time } = exportParseDateTime(record.logDate);
+      console.log(record.logDate);
+      const { date, time } = parseDateTime(record.logDate);
       return {
         employeeID: String(record.userId),
         logDate: date,
@@ -195,6 +196,10 @@ export class SyncService {
         location: record.storeSyncRecords.store.name,
       };
     });
+
+    console.log('=====================================');
+    console.log(transformedData);
+    console.log('=====================================');
 
     // Export based on format
     if (format === 'csv') {
