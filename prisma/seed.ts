@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { PrismaClient } from '../src/generated/prisma/client';
 import { seedUsers } from './seeds/users.seed';
+import { seedStoresWithBiometric } from './seeds/store-with-biometric.seed';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 const adapter = new PrismaPg({
@@ -14,6 +15,7 @@ async function main() {
   console.log('🌱 Starting database seed...');
 
   await seedUsers(prisma);
+  await seedStoresWithBiometric(prisma);
 
   console.log('✅ Seeding complete.');
 }
