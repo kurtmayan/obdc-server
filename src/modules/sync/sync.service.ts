@@ -197,10 +197,6 @@ export class SyncService {
       };
     });
 
-    console.log('=====================================');
-    console.log(transformedData);
-    console.log('=====================================');
-
     // Export based on format
     if (format === 'csv') {
       return this.exportAsCSV(transformedData);
