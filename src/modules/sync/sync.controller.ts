@@ -10,15 +10,28 @@ import {
 import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
+import { QueueService } from '../queue/queue.service';
 
 @Controller('sync')
 export class SyncController {
-  constructor(private readonly service: SyncService) {}
+  constructor(
+    private readonly service: SyncService,
+    private readonly queueService: QueueService,
+  ) {}
 
   @Public()
   @Post()
   createSyncRecord(@Body() data: CreateStoreSyncRecord) {
     return this.service.storeSyncRecord(data);
+  }
+
+  @Public()
+  @Get('sample-endpoint')
+  sample() {
+    const data = {
+      message: 'Hello',
+    };
+    return this.queueService.queueSync(data);
   }
 
   @Public()

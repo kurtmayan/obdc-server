@@ -18,33 +18,18 @@ export class SyncService {
   private logger = new Logger(SyncService.name);
 
   async storeSyncRecord(payload: CreateStoreSyncRecord) {
-    const device_ids = payload.sync_record.map((r) => r.device_id);
+    const deviceIds = [
+      ...new Set(payload.sync_record.map((record) => record.device_id)),
+    ];
 
-    const attendance = await this.prisma.attendanceRecord.findMany({
-      where: {
-        storeSyncRecords: {
-          store: {
-            devices: {
-              some: {
-                serialNumber: {
-                  in: device_ids,
-                },
-              },
-            },
-          },
-        },
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    const syncedDataSet = new Set(attendance.map((record) => record.id));
+    if (deviceIds.length === 0) {
+      throw new BadRequestException('No devices provided!');
+    }
 
     const devices = await this.prisma.devices.findMany({
       where: {
         serialNumber: {
-          in: device_ids,
+          in: deviceIds,
         },
       },
       select: {
@@ -58,68 +43,145 @@ export class SyncService {
       throw new NotFoundException('No devices found!');
     }
 
+    const deviceMap = new Map(
+      devices.map((device) => [device.serialNumber, device]),
+    );
+
+    const missingDevices = deviceIds.filter(
+      (deviceId) => !deviceMap.has(deviceId),
+    );
+
+    if (missingDevices.length > 0) {
+      throw new BadRequestException(
+        `Device not found: ${missingDevices.join(', ')}`,
+      );
+    }
+
+    const incomingAttendanceIds = [
+      ...new Set(
+        payload.sync_record.flatMap((record) =>
+          record.attendance_record.map((log) => log.id),
+        ),
+      ),
+    ];
+
+    if (incomingAttendanceIds.length === 0) {
+      return {
+        success: true,
+        message: 'Record Synced',
+        data: {
+          count: 0,
+        },
+      };
+    }
+
+    const existingAttendance = await this.prisma.attendanceRecord.findMany({
+      where: {
+        id: {
+          in: incomingAttendanceIds,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const existingAttendanceSet = new Set(
+      existingAttendance.map((record) => record.id),
+    );
+
     try {
       const result = await this.prisma.$transaction(async (tx) => {
-        const uniqueStoreIds = [...new Set(devices.map((d) => d.storesId))];
+        const uniqueStoreIds = [
+          ...new Set(devices.map((device) => device.storesId)),
+        ];
 
         const storeSyncRecords = await Promise.all(
           uniqueStoreIds.map((storesId) =>
             tx.storeSyncRecord.create({
-              data: { storesId },
+              data: {
+                storesId,
+              },
+              select: {
+                id: true,
+                storesId: true,
+              },
             }),
           ),
         );
 
         const storeToSyncMap = new Map(
-          uniqueStoreIds.map((storeId, index) => [
-            storeId,
-            storeSyncRecords[index].id,
+          storeSyncRecords.map((syncRecord) => [
+            syncRecord.storesId,
+            syncRecord.id,
           ]),
         );
 
-        const deviceToSyncMap = new Map(
-          devices.map((device) => [
-            device.serialNumber,
-            storeToSyncMap.get(device.storesId),
-          ]),
-        );
+        const CHUNK_SIZE = 500;
+        let totalCount = 0;
+        let batch: {
+          id: string;
+          employeeName: string;
+          userId: string;
+          logDate: Date;
+          logType: number;
+          storeSyncRecordID: string;
+        }[] = [];
 
-        const transformedData = payload.sync_record.flatMap((record) => {
-          const syncId = deviceToSyncMap.get(record.device_id);
+        const insertBatch = async () => {
+          if (batch.length === 0) return;
 
-          if (!syncId) {
+          const created = await tx.attendanceRecord.createMany({
+            data: batch,
+            skipDuplicates: true,
+          });
+
+          totalCount += created.count;
+          batch = [];
+        };
+
+        for (const record of payload.sync_record) {
+          const device = deviceMap.get(record.device_id);
+
+          if (!device) {
             throw new BadRequestException(
               `Device not found: ${record.device_id}`,
             );
           }
 
-          return record.attendance_record
-            .filter((log) => !syncedDataSet.has(log.id))
-            .map((log) => ({
+          const syncId = storeToSyncMap.get(device.storesId);
+
+          if (!syncId) {
+            throw new BadRequestException(
+              `Sync record not created for store: ${device.storesId}`,
+            );
+          }
+
+          for (const log of record.attendance_record) {
+            if (existingAttendanceSet.has(log.id)) {
+              continue;
+            }
+
+            batch.push({
+              id: log.id,
               employeeName: log.employee_name,
               userId: log.employee_id,
               logDate: new Date(log.log_date),
               logType: log.punch,
               storeSyncRecordID: syncId,
-              id: log.id,
-            }));
-        });
+            });
 
-        const CHUNK_SIZE = 500;
-        const chunks = Array.from(
-          { length: Math.ceil(transformedData.length / CHUNK_SIZE) },
-          (_, i) => transformedData.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
-        );
+            if (batch.length >= CHUNK_SIZE) {
+              await insertBatch();
+            }
+          }
+        }
 
-        const results = await Promise.all(
-          chunks.map((chunk) =>
-            tx.attendanceRecord.createMany({ data: chunk }),
-          ),
-        );
+        await insertBatch();
 
-        const totalCount = results.reduce((sum, r) => sum + r.count, 0);
-
-        return { totalCount };
+        return {
+          totalCount,
+        };
       });
 
       this.logger.log(`Inserted ${result.totalCount} attendance records`);
@@ -127,7 +189,9 @@ export class SyncService {
       return {
         success: true,
         message: 'Record Synced',
-        data: { count: result.totalCount },
+        data: {
+          count: result.totalCount,
+        },
       };
     } catch (error) {
       if (
@@ -191,7 +255,14 @@ export class SyncService {
         employeeID: String(record.userId),
         logDate: date,
         logTime: `${date} ${time}`,
-        status: record.logType === 0 ? '1' : '0',
+        status:
+          record.logType === 0
+            ? '1'
+            : record.logType === 1
+              ? '0'
+              : record.logType === 2
+                ? '2'
+                : '2',
         location: record.storeSyncRecords.store.name,
       };
     });
