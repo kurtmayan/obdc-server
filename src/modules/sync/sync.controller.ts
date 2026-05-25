@@ -26,15 +26,6 @@ export class SyncController {
   }
 
   @Public()
-  @Get('sample-endpoint')
-  sample() {
-    const data = {
-      message: 'Hello',
-    };
-    return this.queueService.queueSync(data);
-  }
-
-  @Public()
   @Get('export')
   async exportAttendance(
     @Res() res,
@@ -55,5 +46,13 @@ export class SyncController {
     res.setHeader('Content-Length', buffer.length);
 
     return res.end(buffer);
+  }
+
+  @Public()
+  @Get('sync-records')
+  async getSyncRecordsByDeviceSerialNumbers(
+    @Query('serialNumbers') serialNumbers: string,
+  ) {
+    return this.service.getSyncRecordsByDeviceSerialNumbers(serialNumbers);
   }
 }

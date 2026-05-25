@@ -9,11 +9,15 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
-import { exportParseDateTime, parseDateTime } from 'src/lib/formatDate';
+import { parseDateTime } from 'src/lib/formatDate';
+import { QueueService } from '../queue/queue.service';
 
 @Injectable()
 export class SyncService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly queueService: QueueService,
+  ) {}
 
   private logger = new Logger(SyncService.name);
 
@@ -28,9 +32,7 @@ export class SyncService {
 
     const devices = await this.prisma.devices.findMany({
       where: {
-        serialNumber: {
-          in: deviceIds,
-        },
+        serialNumber: { in: deviceIds },
       },
       select: {
         id: true,
@@ -57,159 +59,36 @@ export class SyncService {
       );
     }
 
-    const incomingAttendanceIds = [
-      ...new Set(
-        payload.sync_record.flatMap((record) =>
-          record.attendance_record.map((log) => log.id),
-        ),
+    const storeIds = [...new Set(devices.map((device) => device.storesId))];
+
+    const syncRecords = await Promise.all(
+      storeIds.map((storesId) =>
+        this.prisma.storeSyncRecord.create({
+          data: {
+            storesId,
+            status: 'PENDING',
+          },
+          select: {
+            id: true,
+            storesId: true,
+            status: true,
+          },
+        }),
       ),
-    ];
-
-    if (incomingAttendanceIds.length === 0) {
-      return {
-        success: true,
-        message: 'Record Synced',
-        data: {
-          count: 0,
-        },
-      };
-    }
-
-    const existingAttendance = await this.prisma.attendanceRecord.findMany({
-      where: {
-        id: {
-          in: incomingAttendanceIds,
-        },
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    const existingAttendanceSet = new Set(
-      existingAttendance.map((record) => record.id),
     );
 
-    try {
-      const result = await this.prisma.$transaction(async (tx) => {
-        const uniqueStoreIds = [
-          ...new Set(devices.map((device) => device.storesId)),
-        ];
+    await this.queueService.queueSync({
+      payload,
+      syncRecords,
+    });
 
-        const storeSyncRecords = await Promise.all(
-          uniqueStoreIds.map((storesId) =>
-            tx.storeSyncRecord.create({
-              data: {
-                storesId,
-              },
-              select: {
-                id: true,
-                storesId: true,
-              },
-            }),
-          ),
-        );
-
-        const storeToSyncMap = new Map(
-          storeSyncRecords.map((syncRecord) => [
-            syncRecord.storesId,
-            syncRecord.id,
-          ]),
-        );
-
-        const CHUNK_SIZE = 500;
-        let totalCount = 0;
-        let batch: {
-          id: string;
-          employeeName: string;
-          userId: string;
-          logDate: Date;
-          logType: number;
-          storeSyncRecordID: string;
-        }[] = [];
-
-        const insertBatch = async () => {
-          if (batch.length === 0) return;
-
-          const created = await tx.attendanceRecord.createMany({
-            data: batch,
-            skipDuplicates: true,
-          });
-
-          totalCount += created.count;
-          batch = [];
-        };
-
-        for (const record of payload.sync_record) {
-          const device = deviceMap.get(record.device_id);
-
-          if (!device) {
-            throw new BadRequestException(
-              `Device not found: ${record.device_id}`,
-            );
-          }
-
-          const syncId = storeToSyncMap.get(device.storesId);
-
-          if (!syncId) {
-            throw new BadRequestException(
-              `Sync record not created for store: ${device.storesId}`,
-            );
-          }
-
-          for (const log of record.attendance_record) {
-            if (existingAttendanceSet.has(log.id)) {
-              continue;
-            }
-
-            batch.push({
-              id: log.id,
-              employeeName: log.employee_name,
-              userId: log.employee_id,
-              logDate: new Date(log.log_date),
-              logType: log.punch,
-              storeSyncRecordID: syncId,
-            });
-
-            if (batch.length >= CHUNK_SIZE) {
-              await insertBatch();
-            }
-          }
-        }
-
-        await insertBatch();
-
-        return {
-          totalCount,
-        };
-      });
-
-      this.logger.log(`Inserted ${result.totalCount} attendance records`);
-
-      return {
-        success: true,
-        message: 'Record Synced',
-        data: {
-          count: result.totalCount,
-        },
-      };
-    } catch (error) {
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException
-      ) {
-        throw error;
-      }
-
-      this.logger.error(
-        'Failed to sync records, transaction rolled back',
-        error,
-      );
-
-      throw new UnprocessableEntityException(
-        "There's an error while saving records in the database!",
-      );
-    }
+    return {
+      success: true,
+      message: 'Sync queued',
+      data: {
+        syncRecords,
+      },
+    };
   }
 
   async export(startDate?: string, endDate?: string, format: string = 'xlsx') {
@@ -346,5 +225,73 @@ export class SyncService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  async getSyncRecordsByDeviceSerialNumbers(serialNumbers: string) {
+    const deviceSerialNumbers = serialNumbers
+      .split(',')
+      .map((serial) => serial.trim())
+      .filter(Boolean);
+
+    if (deviceSerialNumbers.length === 0) {
+      throw new BadRequestException('No device serial numbers provided');
+    }
+
+    const devices = await this.prisma.devices.findMany({
+      where: {
+        serialNumber: {
+          in: deviceSerialNumbers,
+        },
+      },
+      select: {
+        serialNumber: true,
+        store: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            storeSyncRecords: {
+              orderBy: {
+                syncDate: 'desc',
+              },
+              select: {
+                id: true,
+                syncDate: true,
+                status: true,
+                totalRecords: true,
+                insertedRecords: true,
+                failedRecords: true,
+                errorMessage: true,
+                startedAt: true,
+                completedAt: true,
+                storesId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (devices.length === 0) {
+      throw new NotFoundException('No devices found');
+    }
+
+    const foundSerialNumbers = new Set(
+      devices.map((device) => device.serialNumber),
+    );
+
+    const missingSerialNumbers = deviceSerialNumbers.filter(
+      (serial) => !foundSerialNumbers.has(serial),
+    );
+
+    return {
+      success: true,
+      message: 'Store sync records retrieved',
+      data: devices.map((device) => ({
+        deviceSerialNumber: device.serialNumber,
+        store: device.store,
+      })),
+      missingSerialNumbers,
+    };
   }
 }

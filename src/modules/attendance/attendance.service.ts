@@ -74,8 +74,7 @@ export class AttendanceService {
       id: e.id,
       logDate: e.syncDate,
       lastSync: e.syncDate,
-      status: 'synced',
-      pending: 0,
+      status: e.status,
       totalRecord: e.attendanceRecord.length,
     }));
   }
