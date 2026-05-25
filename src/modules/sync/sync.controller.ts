@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -6,7 +7,10 @@ import {
   Query,
   Res,
   StreamableFile,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
@@ -42,5 +46,15 @@ export class SyncController {
     res.setHeader('Content-Length', buffer.length);
 
     return res.end(buffer);
+  }
+
+  @Public()
+  @Post('excel')
+  @UseInterceptors(FileInterceptor('file'))
+  async excelSyncRecord(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('No file provided');
+    }
+    return this.service.excelSyncRecord(file.buffer);
   }
 }

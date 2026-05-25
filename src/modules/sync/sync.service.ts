@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -9,7 +8,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
-import { exportParseDateTime, parseDateTime } from 'src/lib/formatDate';
+import { parseDateTime } from 'src/lib/formatDate';
 
 @Injectable()
 export class SyncService {
@@ -150,6 +149,80 @@ export class SyncService {
 
   async export(startDate?: string, endDate?: string, format: string = 'xlsx') {
     return this.generateExport(startDate, endDate, format);
+  }
+
+  async excelSyncRecord(buffer: Buffer) {
+   const attendanceRecord =  await this.parseExcelAndSync(buffer);
+    return this.storeSyncRecord(attendanceRecord);
+  }
+
+  private async parseExcelAndSync(buffer: Buffer): Promise<CreateStoreSyncRecord> {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+    const worksheet = workbook.worksheets[0];
+
+    if (!worksheet || worksheet.rowCount < 2) {
+      throw new BadRequestException('No data found in Excel file');
+    }
+
+    const syncRecords = new Map<string, any>();
+    let rowCount = 0;
+
+    // Process rows directly without storing them
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return; // Skip header
+      rowCount++;
+
+      // New column format: ID, Serial Number, Name, User ID, Log Date, Log Type
+      const id = row.getCell(1).value?.toString().trim();
+      const deviceIdRaw = row.getCell(2).value?.toString().trim();
+      const employeeName = row.getCell(3).value?.toString().trim();
+      const employeeId = row.getCell(4).value?.toString().trim();
+      const logDate = row.getCell(5).value?.toString().trim();
+      const punchRaw = row.getCell(6).value;
+
+      // Validate all required fields exist
+      if (!deviceIdRaw || !employeeId || !employeeName || !logDate) {
+        throw new BadRequestException(
+          `Row ${rowNumber}: Missing required fields`,
+        );
+      }
+
+      // Extract first device serial number if it contains comma
+      const deviceId = deviceIdRaw.split(',')[0].trim();
+
+      // Single Map operation - use has() before get to avoid double lookup
+      let record = syncRecords.get(deviceId);
+      if (!record) {
+        record = {
+          device_id: deviceId,
+          attendance_record: [],
+        };
+        syncRecords.set(deviceId, record);
+      }
+
+      // Add attendance record
+      record.attendance_record.push({
+        employee_name: employeeName,
+        employee_id: employeeId,
+        log_date: logDate,
+        punch: this.parsePunch(punchRaw),
+        id: id,
+      });
+    });
+
+    if (rowCount === 0) {
+      throw new BadRequestException('No data rows found in Excel file');
+    }
+
+    return {
+      sync_record: Array.from(syncRecords.values()),
+    };
+  }
+
+  private parsePunch(value: any): number {
+    const parsed = parseInt(value?.toString() || '0');
+    return isNaN(parsed) ? 0 : parsed;
   }
 
   private async generateExport(
