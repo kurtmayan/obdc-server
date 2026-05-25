@@ -73,7 +73,7 @@ model AttendanceRecord {
   logType           Int
   logDate           DateTime
   storeSyncRecordID String
-  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id])
+  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
 }
 
 enum SyncStatus {

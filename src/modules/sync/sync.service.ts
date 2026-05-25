@@ -11,6 +11,7 @@ import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
 import { parseDateTime } from 'src/lib/formatDate';
 import { QueueService } from '../queue/queue.service';
+import { formatInTimeZone } from 'date-fns-tz';
 
 @Injectable()
 export class SyncService {
@@ -114,6 +115,9 @@ export class SyncService {
           lte: end,
         },
       },
+      orderBy: {
+        logDate: 'desc',
+      },
       include: {
         storeSyncRecords: {
           include: {
@@ -129,11 +133,18 @@ export class SyncService {
 
     // Transform records to common format
     const transformedData = attendanceRecords.map((record) => {
-      const { date, time } = parseDateTime(record.logDate);
+      const formattedDate = formatInTimeZone(
+        record.logDate,
+        'UTC',
+        'MM/dd/yyyy',
+      );
+
+      const formattedTime = formatInTimeZone(record.logDate, 'UTC', 'HH:mm:ss');
+
       return {
         employeeID: String(record.userId),
-        logDate: date,
-        logTime: `${date} ${time}`,
+        logDate: formattedDate,
+        logTime: `${formattedDate} ${formattedTime}`,
         status:
           record.logType === 0
             ? '1'
