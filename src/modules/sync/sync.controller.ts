@@ -10,10 +10,14 @@ import {
 import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
+import { QueueService } from '../queue/queue.service';
 
 @Controller('sync')
 export class SyncController {
-  constructor(private readonly service: SyncService) {}
+  constructor(
+    private readonly service: SyncService,
+    private readonly queueService: QueueService,
+  ) {}
 
   @Public()
   @Post()
@@ -42,5 +46,13 @@ export class SyncController {
     res.setHeader('Content-Length', buffer.length);
 
     return res.end(buffer);
+  }
+
+  @Public()
+  @Get('sync-records')
+  async getSyncRecordsByDeviceSerialNumbers(
+    @Query('serialNumbers') serialNumbers: string,
+  ) {
+    return this.service.getSyncRecordsByDeviceSerialNumbers(serialNumbers);
   }
 }

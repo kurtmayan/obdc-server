@@ -17,6 +17,7 @@ import { MailModule } from './modules/mail/mail.module';
 import { UsersModule } from './modules/users/users.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { ExcelModule } from './modules/excel/excel.module';
+import { QueueModule } from './modules/queue/queue.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ExcelModule } from './modules/excel/excel.module';
     UsersModule,
     StatisticsModule,
     ExcelModule,
+    QueueModule,
   ],
   controllers: [AppController, StoreController],
   providers: [

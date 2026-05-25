@@ -74,14 +74,13 @@ export class AttendanceService {
       id: e.id,
       logDate: e.syncDate,
       lastSync: e.syncDate,
-      status: 'synced',
-      pending: 0,
+      status: e.status,
       totalRecord: e.attendanceRecord.length,
     }));
   }
 
   async getStoreDetailedRecord(storeId: string, syncRecordId: string) {
-    return await this.prismaService.storeSyncRecord.findFirst({
+    const records = await this.prismaService.storeSyncRecord.findFirst({
       orderBy: {
         syncDate: 'desc',
       },
@@ -93,6 +92,12 @@ export class AttendanceService {
         attendanceRecord: true,
       },
     });
+
+    console.log('===========');
+    console.log(records);
+    console.log('===========');
+
+    return records;
   }
 
   async importAttendanceRecords(file: Express.Multer.File) {

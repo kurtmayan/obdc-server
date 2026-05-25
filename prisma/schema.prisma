@@ -73,12 +73,29 @@ model AttendanceRecord {
   logType           Int
   logDate           DateTime
   storeSyncRecordID String
-  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id])
+  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+}
+
+enum SyncStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  FAILED
 }
 
 model StoreSyncRecord {
   id               String             @id @default(cuid(2))
   syncDate         DateTime           @default(now())
+
+  status           SyncStatus         @default(PENDING)
+  totalRecords     Int                @default(0)
+  insertedRecords  Int                @default(0)
+  failedRecords    Int                @default(0)
+  errorMessage     String?
+
+  startedAt        DateTime?
+  completedAt      DateTime?
+
   store            Stores             @relation(fields: [storesId], references: [id])
   storesId         String
   attendanceRecord AttendanceRecord[]
