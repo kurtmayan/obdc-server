@@ -184,8 +184,50 @@ export class TaskProcessor extends WorkerHost {
   }
 
   @OnWorkerEvent('completed')
-  onCompleted(job: Job) {
+  async onCompleted(job: Job) {
     console.log(`Job ${job.id} completed`);
+
+    // Use UTC to avoid timezone issues with @db.Date
+    const now = new Date();
+    const utcYear = now.getUTCFullYear();
+    const utcMonth = now.getUTCMonth();
+    const utcDate = now.getUTCDate();
+
+    const todayUTC = new Date(Date.UTC(utcYear, utcMonth, utcDate, 0, 0, 0, 0));
+    const tomorrowUTC = new Date(
+      Date.UTC(utcYear, utcMonth, utcDate + 1, 0, 0, 0, 0),
+    );
+
+    // Get all unique stores that had successful syncs today
+    const uniqueStores = await this.prisma.storeSyncRecord.findMany({
+      where: {
+        status: 'SUCCESS',
+        syncDate: {
+          gte: todayUTC,
+          lt: tomorrowUTC,
+        },
+      },
+      select: { storesId: true },
+      distinct: ['storesId'],
+    });
+
+    const uniqueStoreCount = uniqueStores.length;
+
+    // Always SET the total (never increment)
+    await this.prisma.syncStatistics.upsert({
+      where: { syncDate: todayUTC },
+      update: {
+        totalSyncedSuccess: uniqueStoreCount,
+      },
+      create: {
+        syncDate: todayUTC,
+        totalSyncedSuccess: uniqueStoreCount,
+      },
+    });
+
+    console.log(
+      `📊 SyncStatistics: ${uniqueStoreCount} unique store(s) for ${todayUTC.toISOString().split('T')[0]}`,
+    );
   }
 
   @OnWorkerEvent('failed')

@@ -58,7 +58,7 @@ model Devices {
   id           String   @id @default(cuid(2))
   model        String
   serialNumber String
-  store        Stores   @relation(fields: [storesId], references: [id])
+  store        Stores   @relation(fields: [storesId], references: [id], onDelete: Cascade)
   storesId     String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -84,19 +84,19 @@ enum SyncStatus {
 }
 
 model StoreSyncRecord {
-  id               String             @id @default(cuid(2))
-  syncDate         DateTime           @default(now())
+  id       String   @id @default(cuid(2))
+  syncDate DateTime @default(now())
 
-  status           SyncStatus         @default(PENDING)
-  totalRecords     Int                @default(0)
-  insertedRecords  Int                @default(0)
-  failedRecords    Int                @default(0)
-  errorMessage     String?
+  status          SyncStatus @default(PENDING)
+  totalRecords    Int        @default(0)
+  insertedRecords Int        @default(0)
+  failedRecords   Int        @default(0)
+  errorMessage    String?
 
-  startedAt        DateTime?
-  completedAt      DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
 
-  store            Stores             @relation(fields: [storesId], references: [id])
+  store            Stores             @relation(fields: [storesId], references: [id], onDelete: Cascade)
   storesId         String
   attendanceRecord AttendanceRecord[]
 }
@@ -128,4 +128,10 @@ model Users {
   status                 UserStatus @default(PENDING)
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
+}
+
+model SyncStatistics {
+  id                 String   @id @default(cuid(2))
+  totalSyncedSuccess Int      @default(0)
+  syncDate           DateTime @unique @default(dbgenerated("CURRENT_DATE")) @db.Date
 }
