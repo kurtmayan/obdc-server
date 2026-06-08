@@ -123,11 +123,6 @@ export class TaskProcessor extends WorkerHost {
         for (const log of record.attendance_record) {
           if (existingAttendanceSet.has(log.id)) continue;
 
-          console.log('---------------------------------------------------');
-          console.log(log.log_date);
-          console.log(new Date(log.log_date + '.000Z'));
-          console.log('---------------------------------------------------');
-
           batch.push({
             id: log.id,
             employeeName: log.employee_name,
