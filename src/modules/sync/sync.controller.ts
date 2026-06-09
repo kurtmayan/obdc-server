@@ -13,6 +13,7 @@ import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 
 @Controller('sync')
 export class SyncController {
@@ -27,11 +28,11 @@ export class SyncController {
   @Public()
   @Get('export')
   async exportAttendance(
-    @Res() res,
+    @Res() res: Response,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('format') format?: 'xlsx' | 'csv',
-  ) {
+  ): Promise<void> {
     const buffer = await this.service.export(startDate, endDate, format);
 
     const isCSV = format === 'csv';
@@ -42,9 +43,9 @@ export class SyncController {
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Content-Length', buffer.length.toString());
 
-    return res.end(buffer);
+    res.end(buffer);
   }
 
   @Public()
@@ -62,6 +63,6 @@ export class SyncController {
     if (!file) {
       throw new BadRequestException('No file provided');
     }
-    return this.service.excelSyncRecord(file.buffer);
+    return this.service.excelSyncRecord(file);
   }
 }
