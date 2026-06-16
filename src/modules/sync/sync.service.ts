@@ -21,6 +21,7 @@ import type {
   StoreSyncRecordGetPayload,
   StoreSyncRecordSelect,
 } from 'src/generated/prisma/models';
+import { ConfigService } from '@nestjs/config';
 
 type ExportFormat = 'xlsx' | 'csv';
 
@@ -47,6 +48,7 @@ export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly queueService: QueueService,
+    private readonly configService: ConfigService,
   ) {}
 
   async storeSyncRecord(payload: CreateStoreSyncRecord) {
@@ -131,18 +133,60 @@ export class SyncService {
     return this.storeSyncRecord(attendanceRecord);
   }
 
+  private decryptEncryptedExportFile(encryptedBuffer: Buffer): Buffer {
+    const keyBase64 = this.configService.get('OBDC_ENCRYPTION_KEY');
+    console.log(keyBase64);
+
+    if (!keyBase64) {
+      throw new BadRequestException(
+        'Missing OBDC_ENCRYPTION_KEY environment variable',
+      );
+    }
+
+    const key = Buffer.from(keyBase64, 'base64');
+
+    if (key.length !== 32) {
+      throw new BadRequestException(
+        'OBDC_ENCRYPTION_KEY must decode to 32 bytes',
+      );
+    }
+
+    if (encryptedBuffer.length <= 28) {
+      throw new BadRequestException('Invalid encrypted file');
+    }
+
+    const nonce = encryptedBuffer.subarray(0, 12);
+    const encryptedData = encryptedBuffer.subarray(12);
+
+    const ciphertext = encryptedData.subarray(0, encryptedData.length - 16);
+    const authTag = encryptedData.subarray(encryptedData.length - 16);
+
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+      decipher.setAuthTag(authTag);
+
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch {
+      throw new BadRequestException(
+        'Unable to decrypt file. The file may be invalid, modified, or encrypted with the wrong key.',
+      );
+    }
+  }
+
   private extractAndVerifySignedExcel(file: Express.Multer.File): Buffer {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
 
-    if (!file.originalname.toLowerCase().endsWith('.zip')) {
+    if (!file.originalname.toLowerCase().endsWith('.enc')) {
       throw new BadRequestException(
-        'Please upload the signed ZIP file from LBDC',
+        'Please upload the encrypted .enc file from LBDC',
       );
     }
 
-    const zip: AdmZip = new AdmZip(file.buffer);
+    const decryptedZipBuffer = this.decryptEncryptedExportFile(file.buffer);
+
+    const zip: AdmZip = new AdmZip(decryptedZipBuffer);
 
     const excelEntry = zip.getEntry('attendance_export.xlsx');
 
