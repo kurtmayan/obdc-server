@@ -11,5 +11,5 @@ export class CreateDeviceDto {
 
   @IsNotEmpty()
   @IsString()
-  storeId: string;
+  storesId: string;
 }
