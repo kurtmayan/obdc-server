@@ -41,19 +41,37 @@ export class StatisticsService {
       365, // Default to 1 year if no dates provided
     );
 
-    const syncStats = await this.prismaService.syncStatistics.findMany({
-      where: {
-        syncDate: {
-          gte: resolvedStart,
-          lte: resolvedEnd,
+    const [records, totalStores] = await Promise.all([
+      this.prismaService.storeSyncRecord.findMany({
+        where: {
+          status: 'SUCCESS',
+          syncDate: {
+            gte: resolvedStart,
+            lte: resolvedEnd,
+          },
         },
-      },
-      orderBy: {
-        syncDate: 'asc',
-      },
-    });
+        select: {
+          storesId: true,
+          syncDate: true,
+        },
+      }),
+      this.prismaService.stores.count(),
+    ]);
 
-    return syncStats;
+    const dailyStoreSet: Record<string, Set<string>> = {};
+    for (const rec of records) {
+      const dateStr = this.toLocalDateStr(rec.syncDate);
+      if (!dailyStoreSet[dateStr]) dailyStoreSet[dateStr] = new Set();
+      dailyStoreSet[dateStr].add(rec.storesId);
+    }
+
+    return Object.entries(dailyStoreSet)
+      .map(([date, storeSet]) => ({
+        date,
+        synced: storeSet.size,
+        pending: totalStores - storeSet.size,
+      }))
+      .sort((a, b) => (a.date > b.date ? 1 : -1));
   }
 
   parseDateRange(
@@ -61,14 +79,12 @@ export class StatisticsService {
     endDate?: string,
     defaultDaysBack: number = 0,
   ): { start: Date; end: Date } {
-    // resolvedEnd is always based on a fresh Date()
     const resolvedEnd = endDate ? this.parseLocalDate(endDate) : new Date();
 
-    // resolvedStart is based on a separate fresh Date()
     const resolvedStart = startDate
       ? this.parseLocalDate(startDate)
       : (() => {
-          const d = new Date(); // fresh Date, not reusing resolvedEnd
+          const d = new Date();
           d.setDate(d.getDate() - defaultDaysBack);
           return d;
         })();
