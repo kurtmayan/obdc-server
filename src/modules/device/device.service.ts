@@ -23,14 +23,14 @@ export class DeviceService {
         'Device with this serial number already exists',
       );
     const checkStoreExist = await this.prismaService.stores.findFirst({
-      where: { id: createDeviceDto.storeId },
+      where: { id: createDeviceDto.storesId },
     });
     if (!checkStoreExist) throw new NotFoundException('Store not found');
     const response = await this.prismaService.devices.create({
       data: {
         model: createDeviceDto.model,
         serialNumber: createDeviceDto.serialNumber,
-        storesId: createDeviceDto.storeId,
+        storesId: createDeviceDto.storesId,
       },
     });
     if (!response) throw new UnprocessableEntityException();
@@ -54,9 +54,9 @@ export class DeviceService {
       where: { id },
     });
     if (!findDevice) throw new NotFoundException('Device not found');
-    if (updateDeviceDto.storeId) {
+    if (updateDeviceDto.storesId) {
       const checkStoreExist = await this.prismaService.stores.findFirst({
-        where: { id: updateDeviceDto.storeId },
+        where: { id: updateDeviceDto.storesId },
       });
       if (!checkStoreExist) throw new NotFoundException('Store not found');
     }

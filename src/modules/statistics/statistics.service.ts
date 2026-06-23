@@ -10,14 +10,18 @@ export class StatisticsService {
   }
 
   async getTotalStoreSynced(dateRange: { start: Date; end: Date }) {
-    const syncedStores = await this.prismaService.storeSyncRecord.groupBy({
-      by: ['storesId'],
+    const syncedStores = await this.prismaService.storeSyncRecord.findMany({
       where: {
+        status: 'SUCCESS',
         syncDate: {
           gte: dateRange.start,
           lte: dateRange.end,
         },
       },
+      select: {
+        storesId: true,
+      },
+      distinct: ['storesId'],
     });
 
     return syncedStores.length;
@@ -34,41 +38,22 @@ export class StatisticsService {
     const { start: resolvedStart, end: resolvedEnd } = this.parseDateRange(
       startDate,
       endDate,
-      6,
+      365, // Default to 1 year if no dates provided
     );
 
-    const [records, totalStores] = await Promise.all([
-      this.prismaService.storeSyncRecord.findMany({
-        where: {
-          syncDate: {
-            gte: resolvedStart,
-            lte: resolvedEnd,
-          },
+    const syncStats = await this.prismaService.syncStatistics.findMany({
+      where: {
+        syncDate: {
+          gte: resolvedStart,
+          lte: resolvedEnd,
         },
-        select: {
-          storesId: true,
-          syncDate: true,
-        },
-      }),
-      this.prismaService.stores.count(),
-    ]);
+      },
+      orderBy: {
+        syncDate: 'asc',
+      },
+    });
 
-    // Aggregate unique synced stores per day
-    const dailyStoreSet: Record<string, Set<string>> = {};
-    for (const rec of records) {
-      const dateStr = this.toLocalDateStr(rec.syncDate);
-      if (!dailyStoreSet[dateStr]) dailyStoreSet[dateStr] = new Set();
-      dailyStoreSet[dateStr].add(rec.storesId);
-    }
-
-    // Only return days that have actual records
-    return Object.entries(dailyStoreSet)
-      .map(([date, storeSet]) => ({
-        date,
-        synced: storeSet.size,
-        pending: totalStores - storeSet.size,
-      }))
-      .sort((a, b) => (a.date > b.date ? 1 : -1));
+    return syncStats;
   }
 
   parseDateRange(

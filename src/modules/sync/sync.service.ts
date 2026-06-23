@@ -4,16 +4,51 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
+import type {
+  Attendance,
+  CreateStoreSyncRecord,
+  SyncRecord,
+} from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
 import { QueueService } from '../queue/queue.service';
 import { formatInTimeZone } from 'date-fns-tz';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import AdmZip from 'adm-zip';
+import { SyncStatus } from 'src/generated/prisma/enums';
+import type {
+  StoreSyncRecordGetPayload,
+  StoreSyncRecordSelect,
+} from 'src/generated/prisma/models';
+import { ConfigService } from '@nestjs/config';
+
+type ExportFormat = 'xlsx' | 'csv';
+
+type ExportRow = {
+  employeeID: string;
+  logDate: string;
+  logTime: string;
+  status: '0' | '1' | '2';
+  location: string;
+};
+
+const storeSyncRecordSelect = {
+  id: true,
+  storesId: true,
+  status: true,
+} as const satisfies StoreSyncRecordSelect;
+
+type QueuedStoreSyncRecord = StoreSyncRecordGetPayload<{
+  select: typeof storeSyncRecordSelect;
+}>;
 
 @Injectable()
 export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly queueService: QueueService,
+    private readonly configService: ConfigService,
   ) {}
 
   async storeSyncRecord(payload: CreateStoreSyncRecord) {
@@ -56,18 +91,14 @@ export class SyncService {
 
     const storeIds = [...new Set(devices.map((device) => device.storesId))];
 
-    const syncRecords = await Promise.all(
+    const syncRecords: QueuedStoreSyncRecord[] = await Promise.all(
       storeIds.map((storesId) =>
         this.prisma.storeSyncRecord.create({
           data: {
             storesId,
-            status: 'PENDING',
+            status: SyncStatus.PENDING,
           },
-          select: {
-            id: true,
-            storesId: true,
-            status: true,
-          },
+          select: storeSyncRecordSelect,
         }),
       ),
     );
@@ -86,27 +117,148 @@ export class SyncService {
     };
   }
 
-  async export(startDate?: string, endDate?: string, format: string = 'xlsx') {
+  async export(
+    startDate?: string,
+    endDate?: string,
+    format: ExportFormat = 'xlsx',
+  ): Promise<Buffer> {
     return this.generateExport(startDate, endDate, format);
   }
 
-  async excelSyncRecord(buffer: Buffer) {
-    const attendanceRecord = await this.parseExcelAndSync(buffer);
+  async excelSyncRecord(file: Express.Multer.File) {
+    const verifiedExcelBuffer = this.extractAndVerifySignedExcel(file);
+
+    const attendanceRecord = await this.parseExcelAndSync(verifiedExcelBuffer);
+
     return this.storeSyncRecord(attendanceRecord);
+  }
+
+  private decryptEncryptedExportFile(encryptedBuffer: Buffer): Buffer {
+    const keyBase64 = this.configService.get('OBDC_ENCRYPTION_KEY');
+    console.log(keyBase64);
+
+    if (!keyBase64) {
+      throw new BadRequestException(
+        'Missing OBDC_ENCRYPTION_KEY environment variable',
+      );
+    }
+
+    const key = Buffer.from(keyBase64, 'base64');
+
+    if (key.length !== 32) {
+      throw new BadRequestException(
+        'OBDC_ENCRYPTION_KEY must decode to 32 bytes',
+      );
+    }
+
+    if (encryptedBuffer.length <= 28) {
+      throw new BadRequestException('Invalid encrypted file');
+    }
+
+    const nonce = encryptedBuffer.subarray(0, 12);
+    const encryptedData = encryptedBuffer.subarray(12);
+
+    const ciphertext = encryptedData.subarray(0, encryptedData.length - 16);
+    const authTag = encryptedData.subarray(encryptedData.length - 16);
+
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+      decipher.setAuthTag(authTag);
+
+      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch {
+      throw new BadRequestException(
+        'Unable to decrypt file. The file may be invalid, modified, or encrypted with the wrong key.',
+      );
+    }
+  }
+
+  private extractAndVerifySignedExcel(file: Express.Multer.File): Buffer {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    if (!file.originalname.toLowerCase().endsWith('.enc')) {
+      throw new BadRequestException(
+        'Please upload the encrypted .enc file from LBDC',
+      );
+    }
+
+    const decryptedZipBuffer = this.decryptEncryptedExportFile(file.buffer);
+
+    const zip: AdmZip = new AdmZip(decryptedZipBuffer);
+
+    const excelEntry = zip.getEntry('attendance_export.xlsx');
+
+    const signatureEntry = zip.getEntry('attendance_export.xlsx.sig');
+
+    if (!excelEntry || !signatureEntry) {
+      throw new BadRequestException(
+        'Invalid ZIP. It must contain attendance_export.xlsx and attendance_export.xlsx.sig',
+      );
+    }
+
+    const excelBuffer = excelEntry.getData();
+
+    const signatureBase64 = signatureEntry.getData().toString('utf8').trim();
+
+    const isValid = this.verifyLbdcSignature(excelBuffer, signatureBase64);
+
+    if (!isValid) {
+      throw new BadRequestException(
+        'Invalid file signature. The Excel file may have been modified.',
+      );
+    }
+
+    return excelBuffer;
+  }
+
+  private verifyLbdcSignature(
+    excelBuffer: Buffer,
+    signatureBase64: string,
+  ): boolean {
+    const publicKeyPath = path.join(
+      process.cwd(),
+      'keys',
+      'lbdc_public_key.pem',
+    );
+
+    if (!fs.existsSync(publicKeyPath)) {
+      throw new BadRequestException(
+        `LBDC public key not found at ${publicKeyPath}`,
+      );
+    }
+
+    const publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+    const signature = Buffer.from(signatureBase64, 'base64');
+
+    return crypto.verify(
+      'sha256',
+      excelBuffer,
+      {
+        key: publicKey,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN,
+      },
+      signature,
+    );
   }
 
   private async parseExcelAndSync(
     buffer: Buffer,
   ): Promise<CreateStoreSyncRecord> {
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer as any);
+    const excelBuffer = new ArrayBuffer(buffer.byteLength);
+    new Uint8Array(excelBuffer).set(buffer);
+
+    await workbook.xlsx.load(excelBuffer);
     const worksheet = workbook.worksheets[0];
 
     if (!worksheet || worksheet.rowCount < 2) {
       throw new BadRequestException('No data found in Excel file');
     }
 
-    const syncRecords = new Map<string, any>();
+    const syncRecords = new Map<string, SyncRecord>();
     let rowCount = 0;
 
     // Process rows directly without storing them
@@ -115,15 +267,15 @@ export class SyncService {
       rowCount++;
 
       // New column format: ID, Serial Number, Name, User ID, Log Date, Log Type
-      const id = row.getCell(1).value?.toString().trim();
-      const deviceIdRaw = row.getCell(2).value?.toString().trim();
-      const employeeName = row.getCell(3).value?.toString().trim();
-      const employeeId = row.getCell(4).value?.toString().trim();
-      const logDate = row.getCell(5).value?.toString().trim();
-      const punchRaw = row.getCell(6).value;
+      const id = this.getCellText(row.getCell(1).value);
+      const deviceIdRaw = this.getCellText(row.getCell(2).value);
+      const employeeName = this.getCellText(row.getCell(3).value);
+      const employeeId = this.getCellText(row.getCell(4).value);
+      const logDate = this.getCellText(row.getCell(5).value);
+      const punch = this.getPunchValue(row.getCell(6).value, rowNumber);
 
       // Validate all required fields exist
-      if (!deviceIdRaw || !employeeId || !employeeName || !logDate) {
+      if (!id || !deviceIdRaw || !employeeId || !employeeName || !logDate) {
         throw new BadRequestException(
           `Row ${rowNumber}: Missing required fields`,
         );
@@ -142,14 +294,16 @@ export class SyncService {
         syncRecords.set(deviceId, record);
       }
 
-      // Add attendance record
-      record.attendance_record.push({
+      const attendanceRecord: Attendance = {
         employee_name: employeeName,
         employee_id: employeeId,
         log_date: logDate,
-        punch: punchRaw,
-        id: id,
-      });
+        punch,
+        id,
+      };
+
+      // Add attendance record
+      record.attendance_record.push(attendanceRecord);
     });
 
     if (rowCount === 0) {
@@ -164,8 +318,8 @@ export class SyncService {
   private async generateExport(
     startDate?: string,
     endDate?: string,
-    format: string = 'xlsx',
-  ) {
+    format: ExportFormat = 'xlsx',
+  ): Promise<Buffer> {
     // Parse dates properly - create date at midnight UTC
     const start = startDate
       ? new Date(`${startDate}T00:00:00.000Z`)
@@ -197,7 +351,7 @@ export class SyncService {
     });
 
     // Transform records to common format
-    const transformedData = attendanceRecords.map((record) => {
+    const transformedData: ExportRow[] = attendanceRecords.map((record) => {
       const formattedDate = formatInTimeZone(
         record.logDate,
         'UTC',
@@ -210,14 +364,7 @@ export class SyncService {
         employeeID: String(record.userId),
         logDate: formattedDate,
         logTime: `${formattedDate} ${formattedTime}`,
-        status:
-          record.logType === 0
-            ? '1'
-            : record.logType === 1
-              ? '0'
-              : record.logType === 2
-                ? '2'
-                : '2',
+        status: this.mapLogTypeToExportStatus(record.logType),
         location: record.storeSyncRecords.store.name,
       };
     });
@@ -230,9 +377,9 @@ export class SyncService {
     }
   }
 
-  private exportAsCSV(data: any[]): Buffer {
+  private exportAsCSV(data: ExportRow[]): Buffer {
     const headers = ['EMPID', 'Log Date', 'Log Time', 'Status', 'Location'];
-    const rows = [headers];
+    const rows: string[][] = [headers];
 
     data.forEach((record) => {
       rows.push([
@@ -245,13 +392,13 @@ export class SyncService {
     });
 
     const csvContent = rows
-      .map((row) => row.map((cell) => `"${cell}"`).join(','))
+      .map((row) => row.map((cell) => this.escapeCsvCell(cell)).join(','))
       .join('\n');
 
     return Buffer.from(csvContent, 'utf-8');
   }
 
-  private async exportAsExcel(data: any[]): Promise<Buffer> {
+  private async exportAsExcel(data: ExportRow[]): Promise<Buffer> {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Sheet1');
 
@@ -301,6 +448,62 @@ export class SyncService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  private getCellText(value: ExcelJS.CellValue): string | undefined {
+    if (value === null || value === undefined) {
+      return undefined;
+    }
+
+    if (value instanceof Date) {
+      return formatInTimeZone(value, 'UTC', 'yyyy-MM-dd HH:mm:ss');
+    }
+
+    if (typeof value !== 'object') {
+      return this.trimToUndefined(String(value));
+    }
+
+    if ('result' in value) {
+      return this.getCellText(value.result);
+    }
+
+    if ('text' in value) {
+      return this.trimToUndefined(value.text);
+    }
+
+    if ('richText' in value) {
+      return this.trimToUndefined(
+        value.richText.map((richText) => richText.text).join(''),
+      );
+    }
+
+    return undefined;
+  }
+
+  private getPunchValue(value: ExcelJS.CellValue, rowNumber: number): number {
+    const text = this.getCellText(value);
+    const punch = text === undefined ? Number.NaN : Number(text);
+
+    if (!Number.isInteger(punch)) {
+      throw new BadRequestException(`Row ${rowNumber}: Invalid log type`);
+    }
+
+    return punch;
+  }
+
+  private trimToUndefined(value: string): string | undefined {
+    const trimmedValue = value.trim();
+    return trimmedValue.length > 0 ? trimmedValue : undefined;
+  }
+
+  private mapLogTypeToExportStatus(logType: number): ExportRow['status'] {
+    if (logType === 0) return '1';
+    if (logType === 1) return '0';
+    return '2';
+  }
+
+  private escapeCsvCell(cell: string): string {
+    return `"${cell.replace(/"/g, '""')}"`;
   }
 
   async getSyncRecordsByDeviceSerialNumbers(serialNumbers: string) {
