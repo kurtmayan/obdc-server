@@ -93,10 +93,6 @@ export class AttendanceService {
       },
     });
 
-    console.log('===========');
-    console.log(records);
-    console.log('===========');
-
     return records;
   }
 
