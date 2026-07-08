@@ -16,7 +16,7 @@ export class AppController {
 
   @Public()
   @Get('/test')
-  getUser() {
-    return this.appService.getUser();
+  async getUser() {
+    return await this.appService.getUser();
   }
 }
