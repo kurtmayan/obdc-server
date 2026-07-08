@@ -9,7 +9,14 @@ export class AppService {
     return 'Hello World';
   }
 
-  getUser() {
-    return this.prismaService.users.findMany();
+  async getUser() {
+    try {
+      await this.prismaService.users.findMany();
+      return { status: 'ok' };
+    } catch (e) {
+      return {
+        error: e,
+      };
+    }
   }
 }

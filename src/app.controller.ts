@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { AppService } from './app.service';
 import { Roles } from './modules/roles/roles.decorator';
 import { Role } from './generated/prisma/enums';
+import { Public } from './modules/auth/auth.decorator';
 
 @Controller()
 export class AppController {
@@ -13,6 +14,7 @@ export class AppController {
     return this.appService.getHello();
   }
 
+  @Public()
   @Get('/test')
   getUser() {
     return this.appService.getUser();
