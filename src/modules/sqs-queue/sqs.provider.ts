@@ -8,8 +8,7 @@ export const SqsClientProvider: Provider = {
   inject: [ConfigService],
   useFactory: (configService: ConfigService): SQSClient => {
     return new SQSClient({
-      region: configService.getOrThrow<string>('AWS_REGION')
-      },
+      region: configService.getOrThrow<string>('AWS_REGION'),
     });
   },
 };
