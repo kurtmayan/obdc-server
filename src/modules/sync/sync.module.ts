@@ -6,8 +6,8 @@ import { QueueModule } from '../queue/queue.module';
 import { SqsQueueModule } from '../sqs-queue/sqs-queue.module';
 
 @Module({
-  imports: [QueueModule],
-  providers: [SyncService, PrismaService, SqsQueueModule],
+  imports: [QueueModule, SqsQueueModule],
+  providers: [SyncService, PrismaService],
   controllers: [SyncController],
 })
 export class SyncModule {}
