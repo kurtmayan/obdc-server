@@ -6,8 +6,6 @@ services:
       - '3000:3000'
     env_file:
       - .env
-    depends_on:
-      - redis
     restart: unless-stopped
 
   worker:
@@ -15,16 +13,4 @@ services:
     command: node dist/src/worker.js
     env_file:
       - .env
-    depends_on:
-      - redis
     restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
-    volumes:
-      - redis-data:/data
-    restart: unless-stopped
-
-volumes:
-  redis-data:
