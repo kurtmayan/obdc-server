@@ -22,6 +22,7 @@ import type {
   StoreSyncRecordSelect,
 } from 'src/generated/prisma/models';
 import { ConfigService } from '@nestjs/config';
+import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 
 type ExportFormat = 'xlsx' | 'csv';
 
@@ -47,7 +48,7 @@ type QueuedStoreSyncRecord = StoreSyncRecordGetPayload<{
 export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly queueService: QueueService,
+    private readonly sqsQueueService: SqsQueueService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -103,7 +104,7 @@ export class SyncService {
       ),
     );
 
-    await this.queueService.queueSync({
+    await this.sqsQueueService.sendMessage({
       payload,
       syncRecords,
     });
