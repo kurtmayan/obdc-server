@@ -20,6 +20,7 @@ export class SqsQueueService {
   }
 
   async sendMessage<T>(payload: T): Promise<SendMessageCommandOutput> {
+    console.log('it sends');
     return this.sqsClient.send(
       new SendMessageCommand({
         QueueUrl: this.queueUrl,

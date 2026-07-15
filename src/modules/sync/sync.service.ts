@@ -10,7 +10,6 @@ import type {
   SyncRecord,
 } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
-import { QueueService } from '../queue/queue.service';
 import { formatInTimeZone } from 'date-fns-tz';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -105,8 +104,12 @@ export class SyncService {
     );
 
     await this.sqsQueueService.sendMessage({
-      payload,
-      syncRecords,
+      type: 'SYNC_RECORDS',
+      payload: {
+        payload,
+        syncRecords,
+      },
+      createdAt: new Date().toISOString(),
     });
 
     return {
