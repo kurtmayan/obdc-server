@@ -96,9 +96,36 @@ model StoreSyncRecord {
   startedAt   DateTime?
   completedAt DateTime?
 
-  store            Stores             @relation(fields: [storesId], references: [id], onDelete: Cascade)
+  store            Stores                 @relation(fields: [storesId], references: [id], onDelete: Cascade)
   storesId         String
   attendanceRecord AttendanceRecord[]
+  chunks           StoreSyncRecordChunk[]
+}
+
+model StoreSyncRecordChunk {
+  id                String          @id @default(cuid(2))
+  storeSyncRecordID String
+  storeSyncRecord   StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+
+  chunkIndex Int
+  status     SyncStatus @default(PENDING)
+
+  totalRecords    Int @default(0)
+  insertedRecords Int @default(0)
+  failedRecords   Int @default(0)
+
+  payload Json
+
+  errorMessage String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([storeSyncRecordID, chunkIndex])
+  @@index([status])
+  @@index([storeSyncRecordID, status])
 }
 
 enum Role {

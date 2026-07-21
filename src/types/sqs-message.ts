@@ -19,4 +19,10 @@ export interface SyncMessage {
   }[];
 }
 
-export type AppQueueMessage = QueueMessage<'SYNC_RECORDS', SyncMessage>;
+export interface SyncChunkMessage {
+  chunkId: string;
+}
+
+export type AppQueueMessage =
+  | QueueMessage<'SYNC_RECORDS', SyncMessage>
+  | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>;

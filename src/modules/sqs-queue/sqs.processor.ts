@@ -15,8 +15,24 @@ import {
   SQSClient,
 } from '@aws-sdk/client-sqs';
 import { SQS_CLIENT } from './sqs.constants';
-import { AppQueueMessage, SyncMessage } from 'src/types/sqs-message';
+import {
+  AppQueueMessage,
+  SyncChunkMessage,
+  SyncMessage,
+} from 'src/types/sqs-message';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
+import { SyncStatus } from 'src/generated/prisma/enums';
+
+type QueuedSyncRecord = {
+  id: string;
+  storesId: string;
+};
+
+type SyncInsertResult = {
+  totalInserted: number;
+  insertedCountBySyncRecord: Map<string, number>;
+};
 
 @Injectable()
 export class SqsProcessor
@@ -118,6 +134,10 @@ export class SqsProcessor
         await this.processSyncRecords(message.payload);
         return;
 
+      case 'SYNC_RECORD_CHUNK':
+        await this.processSyncRecordChunk(message.payload);
+        return;
+
       default: {
         const unsupportedMessage = message as {
           type?: unknown;
@@ -160,151 +180,7 @@ export class SqsProcessor
         },
       });
 
-      const deviceIds = [
-        ...new Set(payload.sync_record.map((record) => record.device_id)),
-      ];
-
-      if (deviceIds.length === 0) {
-        throw new Error('No devices provided');
-      }
-
-      const devices = await this.prisma.devices.findMany({
-        where: {
-          serialNumber: {
-            in: deviceIds,
-          },
-        },
-        select: {
-          serialNumber: true,
-          storesId: true,
-        },
-      });
-
-      const deviceMap = new Map(
-        devices.map((device) => [device.serialNumber, device]),
-      );
-
-      const missingDeviceIds = deviceIds.filter(
-        (deviceId) => !deviceMap.has(deviceId),
-      );
-
-      if (missingDeviceIds.length > 0) {
-        throw new Error(`Devices not found: ${missingDeviceIds.join(', ')}`);
-      }
-
-      const storeToSyncMap = new Map(
-        syncRecords.map((syncRecord) => [syncRecord.storesId, syncRecord.id]),
-      );
-
-      const incomingAttendanceIds = [
-        ...new Set(
-          payload.sync_record.flatMap((record) =>
-            record.attendance_record.map((log) => log.id),
-          ),
-        ),
-      ];
-
-      const existingAttendance = await this.prisma.attendanceRecord.findMany({
-        where: {
-          id: {
-            in: incomingAttendanceIds,
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      const processedAttendanceIds = new Set(
-        existingAttendance.map((record) => record.id),
-      );
-
-      type AttendanceInsert = {
-        id: string;
-        employeeName: string;
-        userId: string;
-        logDate: Date;
-        logType: number;
-        storeSyncRecordID: string;
-      };
-
-      const CHUNK_SIZE = 500;
-
-      let batch: AttendanceInsert[] = [];
-      let totalInserted = 0;
-
-      const insertedCountBySyncRecord = new Map<string, number>();
-
-      const insertBatch = async (): Promise<void> => {
-        if (batch.length === 0) {
-          return;
-        }
-
-        const currentBatch = batch;
-        batch = [];
-
-        const created = await this.prisma.attendanceRecord.createMany({
-          data: currentBatch,
-          skipDuplicates: true,
-        });
-
-        totalInserted += created.count;
-
-        /*
-         * Exact per-sync counting is only guaranteed when no rows are skipped.
-         * If duplicates may be inserted concurrently, createMany does not tell
-         * us which exact rows were skipped.
-         */
-        if (created.count === currentBatch.length) {
-          for (const item of currentBatch) {
-            insertedCountBySyncRecord.set(
-              item.storeSyncRecordID,
-              (insertedCountBySyncRecord.get(item.storeSyncRecordID) ?? 0) + 1,
-            );
-          }
-        }
-      };
-
-      for (const record of payload.sync_record) {
-        const device = deviceMap.get(record.device_id);
-
-        if (!device) {
-          throw new Error(`Device not found: ${record.device_id}`);
-        }
-
-        const syncRecordId = storeToSyncMap.get(device.storesId);
-
-        if (!syncRecordId) {
-          throw new Error(
-            `Sync record not found for store: ${device.storesId}`,
-          );
-        }
-
-        for (const log of record.attendance_record) {
-          if (processedAttendanceIds.has(log.id)) {
-            continue;
-          }
-
-          const logDate = this.parseLogDate(log.log_date);
-
-          batch.push({
-            id: log.id,
-            employeeName: log.employee_name,
-            userId: log.employee_id,
-            logDate,
-            logType: log.punch,
-            storeSyncRecordID: syncRecordId,
-          });
-
-          processedAttendanceIds.add(log.id);
-
-          if (batch.length >= CHUNK_SIZE) {
-            await insertBatch();
-          }
-        }
-      }
-
-      await insertBatch();
+      const result = await this.insertSyncPayload(payload, syncRecords);
 
       await this.prisma.$transaction(
         syncRecords.map((syncRecord) =>
@@ -317,14 +193,14 @@ export class SqsProcessor
               completedAt: new Date(),
               errorMessage: null,
               insertedRecords:
-                insertedCountBySyncRecord.get(syncRecord.id) ?? 0,
+                result.insertedCountBySyncRecord.get(syncRecord.id) ?? 0,
             },
           }),
         ),
       );
 
       this.logger.log(
-        `Sync completed. Inserted ${totalInserted} attendance records.`,
+        `Sync completed. Inserted ${result.totalInserted} attendance records.`,
       );
     } catch (error) {
       const errorMessage =
@@ -349,6 +225,356 @@ export class SqsProcessor
     }
   }
 
+  private async processSyncRecordChunk(
+    messagePayload: SyncChunkMessage,
+  ): Promise<void> {
+    const chunk = await this.prisma.storeSyncRecordChunk.findUnique({
+      where: {
+        id: messagePayload.chunkId,
+      },
+      select: {
+        id: true,
+        status: true,
+        totalRecords: true,
+        payload: true,
+        storeSyncRecordID: true,
+        storeSyncRecord: {
+          select: {
+            id: true,
+            storesId: true,
+          },
+        },
+      },
+    });
+
+    if (!chunk) {
+      throw new Error(`Sync chunk not found: ${messagePayload.chunkId}`);
+    }
+
+    if (chunk.status === SyncStatus.SUCCESS) {
+      this.logger.log(`Sync chunk ${chunk.id} already processed.`);
+      return;
+    }
+
+    try {
+      await this.prisma.storeSyncRecordChunk.update({
+        where: {
+          id: chunk.id,
+        },
+        data: {
+          status: SyncStatus.PROCESSING,
+          startedAt: new Date(),
+          completedAt: null,
+          errorMessage: null,
+        },
+      });
+
+      if (!this.isCreateStoreSyncRecord(chunk.payload)) {
+        throw new Error(`Invalid sync chunk payload: ${chunk.id}`);
+      }
+
+      await this.prisma.storeSyncRecord.update({
+        where: {
+          id: chunk.storeSyncRecordID,
+        },
+        data: {
+          status: SyncStatus.PROCESSING,
+          startedAt: new Date(),
+          completedAt: null,
+          errorMessage: null,
+        },
+      });
+
+      const result = await this.insertSyncPayload(chunk.payload, [
+        chunk.storeSyncRecord,
+      ]);
+
+      await this.prisma.storeSyncRecordChunk.update({
+        where: {
+          id: chunk.id,
+        },
+        data: {
+          status: SyncStatus.SUCCESS,
+          completedAt: new Date(),
+          errorMessage: null,
+          insertedRecords: result.totalInserted,
+          failedRecords: 0,
+        },
+      });
+
+      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
+
+      this.logger.log(
+        `Sync chunk ${chunk.id} completed. Inserted ${result.totalInserted} attendance records.`,
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unknown error occurred while syncing chunk';
+
+      await this.prisma.storeSyncRecordChunk.update({
+        where: {
+          id: chunk.id,
+        },
+        data: {
+          status: SyncStatus.FAILED,
+          completedAt: new Date(),
+          errorMessage,
+          failedRecords: chunk.totalRecords,
+        },
+      });
+
+      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
+
+      throw error;
+    }
+  }
+
+  private async insertSyncPayload(
+    payload: CreateStoreSyncRecord,
+    syncRecords: QueuedSyncRecord[],
+  ): Promise<SyncInsertResult> {
+    const deviceIds = [
+      ...new Set(payload.sync_record.map((record) => record.device_id)),
+    ];
+
+    if (deviceIds.length === 0) {
+      throw new Error('No devices provided');
+    }
+
+    const devices = await this.prisma.devices.findMany({
+      where: {
+        serialNumber: {
+          in: deviceIds,
+        },
+      },
+      select: {
+        serialNumber: true,
+        storesId: true,
+      },
+    });
+
+    const deviceMap = new Map(
+      devices.map((device) => [device.serialNumber, device]),
+    );
+
+    const missingDeviceIds = deviceIds.filter(
+      (deviceId) => !deviceMap.has(deviceId),
+    );
+
+    if (missingDeviceIds.length > 0) {
+      throw new Error(`Devices not found: ${missingDeviceIds.join(', ')}`);
+    }
+
+    const storeToSyncMap = new Map(
+      syncRecords.map((syncRecord) => [syncRecord.storesId, syncRecord.id]),
+    );
+
+    const incomingAttendanceIds = [
+      ...new Set(
+        payload.sync_record.flatMap((record) =>
+          record.attendance_record.map((log) => log.id),
+        ),
+      ),
+    ];
+
+    const existingAttendance =
+      incomingAttendanceIds.length === 0
+        ? []
+        : await this.prisma.attendanceRecord.findMany({
+            where: {
+              id: {
+                in: incomingAttendanceIds,
+              },
+            },
+            select: {
+              id: true,
+            },
+          });
+
+    const processedAttendanceIds = new Set(
+      existingAttendance.map((record) => record.id),
+    );
+
+    type AttendanceInsert = {
+      id: string;
+      employeeName: string;
+      userId: string;
+      logDate: Date;
+      logType: number;
+      storeSyncRecordID: string;
+    };
+
+    const CHUNK_SIZE = 500;
+
+    let batch: AttendanceInsert[] = [];
+    let totalInserted = 0;
+
+    const insertedCountBySyncRecord = new Map<string, number>();
+
+    const insertBatch = async (): Promise<void> => {
+      if (batch.length === 0) {
+        return;
+      }
+
+      const currentBatch = batch;
+      batch = [];
+
+      const created = await this.prisma.attendanceRecord.createMany({
+        data: currentBatch,
+        skipDuplicates: true,
+      });
+
+      totalInserted += created.count;
+
+      if (syncRecords.length === 1) {
+        const syncRecordId = syncRecords[0].id;
+        insertedCountBySyncRecord.set(
+          syncRecordId,
+          (insertedCountBySyncRecord.get(syncRecordId) ?? 0) + created.count,
+        );
+        return;
+      }
+
+      /*
+       * Exact per-sync counting is only guaranteed when no rows are skipped.
+       * If duplicates may be inserted concurrently, createMany does not tell
+       * us which exact rows were skipped.
+       */
+      if (created.count === currentBatch.length) {
+        for (const item of currentBatch) {
+          insertedCountBySyncRecord.set(
+            item.storeSyncRecordID,
+            (insertedCountBySyncRecord.get(item.storeSyncRecordID) ?? 0) + 1,
+          );
+        }
+      }
+    };
+
+    for (const record of payload.sync_record) {
+      const device = deviceMap.get(record.device_id);
+
+      if (!device) {
+        throw new Error(`Device not found: ${record.device_id}`);
+      }
+
+      const syncRecordId = storeToSyncMap.get(device.storesId);
+
+      if (!syncRecordId) {
+        throw new Error(`Sync record not found for store: ${device.storesId}`);
+      }
+
+      for (const log of record.attendance_record) {
+        if (processedAttendanceIds.has(log.id)) {
+          continue;
+        }
+
+        const logDate = this.parseLogDate(log.log_date);
+
+        batch.push({
+          id: log.id,
+          employeeName: log.employee_name,
+          userId: log.employee_id,
+          logDate,
+          logType: log.punch,
+          storeSyncRecordID: syncRecordId,
+        });
+
+        processedAttendanceIds.add(log.id);
+
+        if (batch.length >= CHUNK_SIZE) {
+          await insertBatch();
+        }
+      }
+    }
+
+    await insertBatch();
+
+    return {
+      totalInserted,
+      insertedCountBySyncRecord,
+    };
+  }
+
+  private async finalizeStoreSyncRecord(
+    storeSyncRecordID: string,
+  ): Promise<void> {
+    const [failedChunk, incompleteChunks, aggregate] = await Promise.all([
+      this.prisma.storeSyncRecordChunk.findFirst({
+        where: {
+          storeSyncRecordID,
+          status: SyncStatus.FAILED,
+        },
+        select: {
+          errorMessage: true,
+        },
+      }),
+      this.prisma.storeSyncRecordChunk.count({
+        where: {
+          storeSyncRecordID,
+          status: {
+            in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
+          },
+        },
+      }),
+      this.prisma.storeSyncRecordChunk.aggregate({
+        where: {
+          storeSyncRecordID,
+        },
+        _sum: {
+          insertedRecords: true,
+          failedRecords: true,
+        },
+      }),
+    ]);
+
+    if (failedChunk) {
+      await this.prisma.storeSyncRecord.update({
+        where: {
+          id: storeSyncRecordID,
+        },
+        data: {
+          status: SyncStatus.FAILED,
+          completedAt: new Date(),
+          insertedRecords: aggregate._sum.insertedRecords ?? 0,
+          failedRecords: aggregate._sum.failedRecords ?? 0,
+          errorMessage: failedChunk.errorMessage,
+        },
+      });
+      return;
+    }
+
+    if (incompleteChunks > 0) {
+      await this.prisma.storeSyncRecord.update({
+        where: {
+          id: storeSyncRecordID,
+        },
+        data: {
+          status: SyncStatus.PROCESSING,
+          insertedRecords: aggregate._sum.insertedRecords ?? 0,
+          failedRecords: aggregate._sum.failedRecords ?? 0,
+          completedAt: null,
+          errorMessage: null,
+        },
+      });
+      return;
+    }
+
+    await this.prisma.storeSyncRecord.update({
+      where: {
+        id: storeSyncRecordID,
+      },
+      data: {
+        status: SyncStatus.SUCCESS,
+        completedAt: new Date(),
+        insertedRecords: aggregate._sum.insertedRecords ?? 0,
+        failedRecords: aggregate._sum.failedRecords ?? 0,
+        errorMessage: null,
+      },
+    });
+  }
+
   private isAppQueueMessage(value: unknown): value is AppQueueMessage {
     if (!value || typeof value !== 'object') {
       return false;
@@ -356,15 +582,21 @@ export class SqsProcessor
 
     const message = value as Record<string, unknown>;
 
-    if (message.type !== 'SYNC_RECORDS') {
-      return false;
-    }
-
     if (typeof message.createdAt !== 'string') {
       return false;
     }
 
     if (!message.payload || typeof message.payload !== 'object') {
+      return false;
+    }
+
+    if (message.type === 'SYNC_RECORD_CHUNK') {
+      const chunkPayload = message.payload as Record<string, unknown>;
+
+      return typeof chunkPayload.chunkId === 'string';
+    }
+
+    if (message.type !== 'SYNC_RECORDS') {
       return false;
     }
 
@@ -378,11 +610,11 @@ export class SqsProcessor
       return false;
     }
 
-    const syncPayload = messagePayload.payload as Record<string, unknown>;
-
-    if (!Array.isArray(syncPayload.sync_record)) {
+    if (!this.isCreateStoreSyncRecord(messagePayload.payload)) {
       return false;
     }
+
+    const syncPayload = messagePayload.payload;
 
     const validSyncRecords = messagePayload.syncRecords.every((record) => {
       if (!record || typeof record !== 'object') {
@@ -398,7 +630,23 @@ export class SqsProcessor
       return false;
     }
 
-    const validPayloadRecords = syncPayload.sync_record.every((record) => {
+    return validSyncRecords && this.isCreateStoreSyncRecord(syncPayload);
+  }
+
+  private isCreateStoreSyncRecord(
+    value: unknown,
+  ): value is CreateStoreSyncRecord {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+
+    const syncPayload = value as Record<string, unknown>;
+
+    if (!Array.isArray(syncPayload.sync_record)) {
+      return false;
+    }
+
+    return syncPayload.sync_record.every((record) => {
       if (!record || typeof record !== 'object') {
         return false;
       }
@@ -428,8 +676,6 @@ export class SqsProcessor
         );
       });
     });
-
-    return validPayloadRecords;
   }
 
   private parseLogDate(value: string): Date {

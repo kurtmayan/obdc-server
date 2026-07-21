@@ -10,7 +10,6 @@ import type {
   SyncRecord,
 } from './dto/create-store-sync-record.dto';
 import * as ExcelJS from 'exceljs';
-import { QueueService } from '../queue/queue.service';
 import { formatInTimeZone } from 'date-fns-tz';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -23,6 +22,7 @@ import type {
 } from 'src/generated/prisma/models';
 import { ConfigService } from '@nestjs/config';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
+import { Prisma } from 'src/generated/prisma/client';
 
 type ExportFormat = 'xlsx' | 'csv';
 
@@ -43,6 +43,8 @@ const storeSyncRecordSelect = {
 type QueuedStoreSyncRecord = StoreSyncRecordGetPayload<{
   select: typeof storeSyncRecordSelect;
 }>;
+
+const SYNC_CHUNK_ATTENDANCE_RECORD_LIMIT = 500;
 
 @Injectable()
 export class SyncService {
@@ -90,24 +92,71 @@ export class SyncService {
       );
     }
 
-    const storeIds = [...new Set(devices.map((device) => device.storesId))];
+    const recordsByStore = new Map<string, SyncRecord[]>();
 
-    const syncRecords: QueuedStoreSyncRecord[] = await Promise.all(
-      storeIds.map((storesId) =>
-        this.prisma.storeSyncRecord.create({
+    for (const record of payload.sync_record) {
+      const device = deviceMap.get(record.device_id);
+
+      if (!device) {
+        throw new BadRequestException(`Device not found: ${record.device_id}`);
+      }
+
+      const storeRecords = recordsByStore.get(device.storesId) ?? [];
+      storeRecords.push(record);
+      recordsByStore.set(device.storesId, storeRecords);
+    }
+
+    const syncRecords: QueuedStoreSyncRecord[] = [];
+    const chunkIds: string[] = [];
+
+    for (const [storesId, storeRecords] of recordsByStore) {
+      const storePayload: CreateStoreSyncRecord = {
+        sync_record: storeRecords,
+      };
+
+      const chunks = this.chunkSyncPayload(storePayload);
+      const totalRecords = this.countAttendanceRecords(storePayload);
+
+      const syncRecord = await this.prisma.storeSyncRecord.create({
+        data: {
+          storesId,
+          status: SyncStatus.PENDING,
+          totalRecords,
+        },
+        select: storeSyncRecordSelect,
+      });
+
+      syncRecords.push(syncRecord);
+
+      for (const [chunkIndex, chunkPayload] of chunks.entries()) {
+        const chunk = await this.prisma.storeSyncRecordChunk.create({
           data: {
-            storesId,
+            storeSyncRecordID: syncRecord.id,
+            chunkIndex,
             status: SyncStatus.PENDING,
+            totalRecords: this.countAttendanceRecords(chunkPayload),
+            payload: chunkPayload as unknown as Prisma.InputJsonValue,
           },
-          select: storeSyncRecordSelect,
+          select: {
+            id: true,
+          },
+        });
+
+        chunkIds.push(chunk.id);
+      }
+    }
+
+    await Promise.all(
+      chunkIds.map((chunkId) =>
+        this.sqsQueueService.sendMessage({
+          type: 'SYNC_RECORD_CHUNK',
+          payload: {
+            chunkId,
+          },
+          createdAt: new Date().toISOString(),
         }),
       ),
     );
-
-    await this.sqsQueueService.sendMessage({
-      payload,
-      syncRecords,
-    });
 
     return {
       success: true,
@@ -116,6 +165,77 @@ export class SyncService {
         syncRecords,
       },
     };
+  }
+
+  private chunkSyncPayload(
+    payload: CreateStoreSyncRecord,
+  ): CreateStoreSyncRecord[] {
+    const chunks: CreateStoreSyncRecord[] = [];
+    let currentRecords: SyncRecord[] = [];
+    let currentAttendanceCount = 0;
+
+    const flushChunk = () => {
+      if (currentRecords.length === 0) {
+        return;
+      }
+
+      chunks.push({
+        sync_record: currentRecords,
+      });
+
+      currentRecords = [];
+      currentAttendanceCount = 0;
+    };
+
+    for (const record of payload.sync_record) {
+      if (record.attendance_record.length === 0) {
+        currentRecords.push({
+          device_id: record.device_id,
+          attendance_record: [],
+        });
+        continue;
+      }
+
+      let offset = 0;
+
+      while (offset < record.attendance_record.length) {
+        const remainingCapacity =
+          SYNC_CHUNK_ATTENDANCE_RECORD_LIMIT - currentAttendanceCount;
+
+        if (remainingCapacity === 0) {
+          flushChunk();
+          continue;
+        }
+
+        const attendanceSlice = record.attendance_record.slice(
+          offset,
+          offset + remainingCapacity,
+        );
+
+        currentRecords.push({
+          device_id: record.device_id,
+          attendance_record: attendanceSlice,
+        });
+
+        currentAttendanceCount += attendanceSlice.length;
+        offset += attendanceSlice.length;
+
+        if (currentAttendanceCount >= SYNC_CHUNK_ATTENDANCE_RECORD_LIMIT) {
+          flushChunk();
+        }
+      }
+    }
+
+    flushChunk();
+
+    return chunks.length > 0 ? chunks : [{ sync_record: [] }];
+  }
+
+  private countAttendanceRecords(payload: CreateStoreSyncRecord): number {
+    return payload.sync_record.reduce(
+      (count, record) => count + record.attendance_record.length,
+      0,
+    );
   }
 
   async export(

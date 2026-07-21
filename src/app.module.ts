@@ -17,7 +17,6 @@ import { MailModule } from './modules/mail/mail.module';
 import { UsersModule } from './modules/users/users.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { ExcelModule } from './modules/excel/excel.module';
-import { QueueModule } from './modules/queue/queue.module';
 import { SqsQueueModule } from './modules/sqs-queue/sqs-queue.module';
 import { TestingModule } from './modules/testing/testing.module';
 
@@ -35,7 +34,6 @@ import { TestingModule } from './modules/testing/testing.module';
     UsersModule,
     StatisticsModule,
     ExcelModule,
-    QueueModule,
     SqsQueueModule,
     TestingModule,
   ],
