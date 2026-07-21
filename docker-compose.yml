@@ -14,3 +14,10 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+
+  elasticmq:
+    image: softwaremill/elasticmq-native
+    ports:
+      - "9324:9324"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
