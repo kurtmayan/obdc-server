@@ -253,6 +253,7 @@ export class SqsProcessor
 
     if (chunk.status === SyncStatus.SUCCESS) {
       this.logger.log(`Sync chunk ${chunk.id} already processed.`);
+      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
       return;
     }
 
