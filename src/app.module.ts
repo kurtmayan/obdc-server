@@ -19,6 +19,9 @@ import { StatisticsModule } from './modules/statistics/statistics.module';
 import { ExcelModule } from './modules/excel/excel.module';
 import { SqsQueueModule } from './modules/sqs-queue/sqs-queue.module';
 import { TestingModule } from './modules/testing/testing.module';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { AuditTrailModule } from './modules/audit-trail/audit-trail.module';
+import { AuditTrailInterceptor } from './modules/audit-trail/interceptors/audit-trail.interceptor';
 
 @Module({
   imports: [
@@ -36,6 +39,7 @@ import { TestingModule } from './modules/testing/testing.module';
     ExcelModule,
     SqsQueueModule,
     TestingModule,
+    AuditTrailModule,
   ],
   controllers: [AppController, StoreController],
   providers: [
@@ -49,6 +53,10 @@ import { TestingModule } from './modules/testing/testing.module';
     {
       provide: APP_GUARD,
       useClass: RolesGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditTrailInterceptor,
     },
   ],
 })
