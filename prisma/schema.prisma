@@ -140,8 +140,8 @@ enum UserStatus {
 }
 
 model Users {
-  id                     String     @id @default(cuid(2))
-  email                  String     @unique
+  id                     String       @id @default(cuid(2))
+  email                  String       @unique
   password               String?
   firstName              String
   middleName             String
@@ -152,14 +152,34 @@ model Users {
   passwordResetToken     String?
   passwordResetExpiresAt DateTime?
   contactNumber          String?
-  status                 UserStatus @default(PENDING)
-  lastPasswordUpdate     DateTime   @default(now())
-  createdAt              DateTime   @default(now())
-  updatedAt              DateTime   @updatedAt
+  status                 UserStatus   @default(PENDING)
+  lastPasswordUpdate     DateTime     @default(now())
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  auditTrails            AuditTrail[]
 }
 
 model SyncStatistics {
   id                 String   @id @default(cuid(2))
   totalSyncedSuccess Int      @default(0)
   syncDate           DateTime @unique @default(dbgenerated("CURRENT_DATE")) @db.Date
+}
+
+model AuditTrail {
+  id          String   @id @default(cuid(2))
+  userId      String?
+  user        Users?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userEmail   String?
+  action      String
+  method      String
+  endpoint    String
+  statusCode  Int?
+  description String?
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([userEmail])
+  @@index([action])
+  @@index([createdAt])
 }
