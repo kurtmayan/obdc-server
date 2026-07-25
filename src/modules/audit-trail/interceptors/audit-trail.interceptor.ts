@@ -29,6 +29,8 @@ export class AuditTrailInterceptor implements NestInterceptor {
     }
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const ipAddress = request.ip ?? request.socket.remoteAddress ?? null;
+    const userAgent = request.get('user-agent') ?? null;
 
     console.log('AUDIT REQUEST USER:', request.user);
 
@@ -57,6 +59,8 @@ export class AuditTrailInterceptor implements NestInterceptor {
           statusCode: response.statusCode,
           description: 'Request completed successfully',
           payload,
+          ipAddress,
+          userAgent,
         });
       }),
       catchError((error: unknown) => {

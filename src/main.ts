@@ -7,7 +7,7 @@ import express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  // Increase the body size limit
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
   const config = new DocumentBuilder().build();

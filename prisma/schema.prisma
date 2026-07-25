@@ -176,6 +176,8 @@ model AuditTrail {
   statusCode  Int?
   description String?
   payload     Json?
+  ipAddress   String?
+  userAgent   String?
   createdAt   DateTime @default(now())
 
   @@index([userId])
