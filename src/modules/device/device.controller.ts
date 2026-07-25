@@ -16,25 +16,25 @@ import { Public } from '../auth/auth.decorator';
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
 
-  @Public()
+  // @Public()
   @Post()
   create(@Body() createDeviceDto: CreateDeviceDto) {
     return this.deviceService.create(createDeviceDto);
   }
 
-  @Public()
+  // @Public()
   @Get()
   findAll() {
     return this.deviceService.findAll();
   }
 
-  @Public()
+  // @Public()
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.deviceService.findOne(id);
   }
 
-  @Public()
+  // @Public()
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDeviceDto) {
     return this.deviceService.update(id, updateDeviceDto);

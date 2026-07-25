@@ -8,9 +8,9 @@ import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { catchError, Observable, tap, throwError } from 'rxjs';
 import type { Prisma } from 'src/generated/prisma/client';
-import { AuditTrailService } from '../audit-trail.service';
-import { AuditAction } from '../decorators/audit-action.decorator';
+import { AuditAction } from './audit-trail.decorator';
 import type { JwtPayload } from 'jsonwebtoken';
+import { AuditTrailService } from './audit-trail.service';
 
 type AuthenticatedRequest = Request & {
   user?: JwtPayload;
