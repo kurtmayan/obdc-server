@@ -3,6 +3,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { AttendanceService } from './attendance.service';
 import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
+import { FindGeneralRecordDto } from './dto/find-general-record.dto';
 
 @Controller('attendance')
 export class AttendanceController {
@@ -23,8 +25,8 @@ export class AttendanceController {
 
   @Public()
   @Get('store')
-  getGeneralRecord() {
-    return this.attendanceService.getGeneralRecord();
+  getGeneralRecord(@Query() query: FindGeneralRecordDto) {
+    return this.attendanceService.getGeneralRecord(query);
   }
 
   @Public()
@@ -34,7 +36,7 @@ export class AttendanceController {
   }
 
   @Public()
-  @Get('store/:id/:syncRecordId')
+  @Get('store/:storeId/:syncRecordId')
   getStoreDetailedRecord(
     @Param('storeId') storeId: string,
     @Param('syncRecordId') syncRecordId: string,
