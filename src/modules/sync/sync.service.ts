@@ -242,8 +242,9 @@ export class SyncService {
     startDate?: string,
     endDate?: string,
     format: ExportFormat = 'xlsx',
+    storeIds?: string,
   ): Promise<Buffer> {
-    return this.generateExport(startDate, endDate, format);
+    return this.generateExport(startDate, endDate, format, storeIds);
   }
 
   async excelSyncRecord(file: Express.Multer.File) {
@@ -440,6 +441,7 @@ export class SyncService {
     startDate?: string,
     endDate?: string,
     format: ExportFormat = 'xlsx',
+    storeIds?: string,
   ): Promise<Buffer> {
     // Parse dates properly - create date at midnight UTC
     const start = startDate
@@ -447,14 +449,26 @@ export class SyncService {
       : new Date(0);
 
     const end = endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date();
+    const selectedStoreIds = this.parseDelimitedIds(storeIds);
+
+    const where: Prisma.AttendanceRecordWhereInput = {
+      logDate: {
+        gte: start,
+        lte: end,
+      },
+      ...(selectedStoreIds.length > 0
+        ? {
+            storeSyncRecords: {
+              storesId: {
+                in: selectedStoreIds,
+              },
+            },
+          }
+        : {}),
+    };
 
     const attendanceRecords = await this.prisma.attendanceRecord.findMany({
-      where: {
-        logDate: {
-          gte: start,
-          lte: end,
-        },
-      },
+      where,
       orderBy: {
         logDate: 'desc',
       },
@@ -615,6 +629,12 @@ export class SyncService {
   private trimToUndefined(value: string): string | undefined {
     const trimmedValue = value.trim();
     return trimmedValue.length > 0 ? trimmedValue : undefined;
+  }
+
+  private parseDelimitedIds(value?: string): string[] {
+    if (!value) return [];
+
+    return [...new Set(value.split(',').map((id) => id.trim()).filter(Boolean))];
   }
 
   private mapLogTypeToExportStatus(logType: number): ExportRow['status'] {
