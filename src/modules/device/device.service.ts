@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
+import { FindAllDeviceDto } from './dto/find-all.dto';
 
 @Injectable()
 export class DeviceService {
@@ -37,13 +38,71 @@ export class DeviceService {
     return response;
   }
 
-  async findAll() {
-    return await this.prismaService.devices.findMany();
+  async findAll({ page, pageSize, q }: FindAllDeviceDto) {
+    const take = pageSize;
+    const skip = (page - 1) * take;
+
+    const where = q
+      ? {
+          OR: [
+            {
+              model: {
+                contains: q,
+                mode: 'insensitive' as const,
+              },
+            },
+            {
+              serialNumber: {
+                contains: q,
+                mode: 'insensitive' as const,
+              },
+            },
+          ],
+        }
+      : undefined;
+
+    const [items, count] = await this.prismaService.$transaction([
+      this.prismaService.devices.findMany({
+        where,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take,
+        include: {
+          store: {
+            select: {
+              id: true,
+              name: true,
+              location: true,
+            },
+          },
+        },
+      }),
+      this.prismaService.devices.count({ where }),
+    ]);
+
+    return {
+      items,
+      page,
+      pageSize: take,
+      totalItems: count,
+      totalPages: Math.ceil(count / take),
+    };
   }
 
   async findOne(id: string) {
     const response = await this.prismaService.devices.findFirst({
       where: { id },
+      include: {
+        store: {
+          select: {
+            id: true,
+            name: true,
+            location: true,
+          },
+        },
+      },
     });
     if (!response) throw new NotFoundException('Device not found');
     return response;

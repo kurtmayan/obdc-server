@@ -6,11 +6,13 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { DeviceService } from './device.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { Public } from '../auth/auth.decorator';
+import { FindAllDeviceDto } from './dto/find-all.dto';
 
 @Controller('device')
 export class DeviceController {
@@ -24,8 +26,8 @@ export class DeviceController {
 
   @Public()
   @Get()
-  findAll() {
-    return this.deviceService.findAll();
+  findAll(@Query() query: FindAllDeviceDto) {
+    return this.deviceService.findAll(query);
   }
 
   @Public()

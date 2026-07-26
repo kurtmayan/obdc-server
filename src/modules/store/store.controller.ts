@@ -25,6 +25,12 @@ export class StoreController {
   }
 
   @Public()
+  @Get('/lookup')
+  storesLookup(@Query() query: StoreLookup) {
+    return this.storeService.storeLookup(query);
+  }
+
+  @Public()
   @Get()
   findAll(@Query() query: FindAllStoreDto) {
     return this.storeService.findAll(query);
@@ -52,11 +58,5 @@ export class StoreController {
   @Patch('/deactivate/:id')
   deactivateStore(@Param('id') id: string) {
     return this.storeService.deactivateStore(id);
-  }
-
-  @Public()
-  @Get('lookup')
-  storesLookup(@Query() query: StoreLookup) {
-    return this.storeService.storeLookup(query);
   }
 }
