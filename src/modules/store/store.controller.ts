@@ -6,11 +6,13 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { StoreService } from './store.service';
 import { UpdateStoreDto } from './dto/update-store.dto';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { Public } from '../auth/auth.decorator';
+import { FindAllStoreDto, StoreLookup } from './dto/find-all.dto';
 
 @Controller('store')
 export class StoreController {
@@ -24,8 +26,8 @@ export class StoreController {
 
   @Public()
   @Get()
-  findAll() {
-    return this.storeService.findAll();
+  findAll(@Query() query: FindAllStoreDto) {
+    return this.storeService.findAll(query);
   }
 
   @Public()
@@ -44,5 +46,17 @@ export class StoreController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.storeService.remove(id);
+  }
+
+  @Public()
+  @Patch('/deactivate/:id')
+  deactivateStore(@Param('id') id: string) {
+    return this.storeService.deactivateStore(id);
+  }
+
+  @Public()
+  @Get('lookup')
+  storesLookup(@Query() query: StoreLookup) {
+    return this.storeService.storeLookup(query);
   }
 }
