@@ -15,25 +15,25 @@ import type { Express } from 'express';
 export class AttendanceController {
   constructor(private attendanceService: AttendanceService) {}
 
-  @Public()
+  // @Public()
   @Get('all')
   getAllRecords() {
     return this.attendanceService.getAllData();
   }
 
-  @Public()
+  // @Public()
   @Get('store')
   getGeneralRecord() {
     return this.attendanceService.getGeneralRecord();
   }
 
-  @Public()
+  // @Public()
   @Get('store/:storeId')
   getStoreRecord(@Param('storeId') storeId: string) {
     return this.attendanceService.getStoreRecord(storeId);
   }
 
-  @Public()
+  // @Public()
   @Get('store/:id/:syncRecordId')
   getStoreDetailedRecord(
     @Param('storeId') storeId: string,
@@ -42,7 +42,7 @@ export class AttendanceController {
     return this.attendanceService.getStoreDetailedRecord(storeId, syncRecordId);
   }
 
-  @Public()
+  // @Public()
   @Post('import')
   @UseInterceptors(FileInterceptor('file'))
   importAttendanceRecords(@UploadedFile() file: Express.Multer.File) {

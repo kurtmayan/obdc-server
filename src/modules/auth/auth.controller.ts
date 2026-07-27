@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { Public } from './auth.decorator';
@@ -31,7 +39,7 @@ export class AuthController {
 
   @Get('validate')
   validateToken(@Req() req: Request & { user: JwtPayload }) {
-    return req.user;
+    return this.authService.validateToken(req.user);
   }
 
   @Public()
@@ -44,5 +52,10 @@ export class AuthController {
   @Post('reset-password')
   resetPassword(@Body() credentials: ResetPasswordAuthDto) {
     return this.authService.resetPassword(credentials);
+  }
+
+  @Post('request-password-reset-token/:id')
+  generatePasswordResetToken(@Param('id') id: string) {
+    return this.authService.generatePasswordResetToken(id);
   }
 }
