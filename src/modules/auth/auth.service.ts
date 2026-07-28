@@ -43,7 +43,32 @@ export class AuthService {
       credentials.password,
       checkUserExist.password,
     );
-    if (!isMatch) throw new UnauthorizedException('Invalid credentials');
+    if (!isMatch) {
+      await this.prismaService.users.update({
+        where: { id: checkUserExist.id },
+        data: {
+          loginFailedAttempts: checkUserExist.loginFailedAttempts + 1,
+        },
+      });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const isAccountLocked = checkUserExist.loginFailedAttempts >= 5;
+    if (isAccountLocked) {
+      throw new UnauthorizedException({
+        message:
+          'Your account is locked. Please contact your administrator for assistance.',
+        error: 'Unauthorized',
+        statusCode: 401,
+        code: 'ACCOUNT_LOCKED',
+      });
+    }
+    await this.prismaService.users.update({
+      where: { id: checkUserExist.id },
+      data: {
+        loginFailedAttempts: 0,
+      },
+    });
 
     if (this.isPasswordExpired(checkUserExist.lastPasswordUpdate)) {
       const resetToken = await this.createPasswordResetToken(checkUserExist.id);
@@ -215,7 +240,24 @@ export class AuthService {
       );
     }
 
+    const isSameAsPreviousPassword = (
+      await Promise.all(
+        checkUserExist.lastUserPassword.map(async (hashedPassword) =>
+          bcrypt.compare(credentials.newPassword, hashedPassword),
+        ),
+      )
+    ).some(Boolean);
+    if (isSameAsPreviousPassword) {
+      throw new BadRequestException(
+        'New password must be different from your last 3 previous passwords.',
+      );
+    }
+
     const hashedPassword = await bcrypt.hash(credentials.newPassword, 10);
+    const updatedPasswordHistory = [
+      ...(checkUserExist.lastUserPassword ?? []),
+      hashedPassword,
+    ].slice(-3);
 
     await this.prismaService.users.update({
       where: { id: checkUserExist.id },
@@ -224,6 +266,7 @@ export class AuthService {
         passwordResetToken: null,
         passwordResetExpiresAt: null,
         lastPasswordUpdate: new Date(),
+        lastUserPassword: updatedPasswordHistory,
       },
     });
 

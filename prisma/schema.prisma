@@ -154,6 +154,8 @@ model Users {
   contactNumber          String?
   status                 UserStatus   @default(PENDING)
   lastPasswordUpdate     DateTime     @default(now())
+  loginFailedAttempts    Int          @default(0)
+  lastUserPassword       String[]
   createdAt              DateTime     @default(now())
   updatedAt              DateTime     @updatedAt
   auditTrails            AuditTrail[]
