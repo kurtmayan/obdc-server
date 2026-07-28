@@ -53,7 +53,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const isAccountLocked = checkUserExist.loginFailedAttempts >= 5;
+    const isAccountLocked =
+      checkUserExist.loginFailedAttempts >= 5 ||
+      checkUserExist.otpFailedAttempts >= 5;
     if (isAccountLocked) {
       throw new UnauthorizedException({
         message:
@@ -83,55 +85,219 @@ export class AuthService {
       });
     }
 
+    const currentDate = new Date();
+    if (checkUserExist.otp && checkUserExist.otpExpiresAt) {
+      const currentResendAvailableAt = new Date(
+        checkUserExist.otpExpiresAt.getTime() - 4 * 60 * 1000,
+      );
+      if (currentDate < currentResendAvailableAt) {
+        return {
+          message: 'OTP Sent to email',
+          otpExpiresAt: checkUserExist.otpExpiresAt,
+          resendAvailableAt: currentResendAvailableAt,
+        };
+      }
+    }
+
     const otp = otpGenerator.generate(6, {
       upperCaseAlphabets: false,
       lowerCaseAlphabets: false,
       specialChars: false,
     });
-    await this.prismaService.users.update({
+    const otpExpiresAt = new Date(currentDate.getTime() + 5 * 60 * 1000);
+    const resendAvailableAt = new Date(otpExpiresAt.getTime() - 4 * 60 * 1000);
+    const updateOtp = await this.prismaService.users.updateMany({
       where: {
         id: checkUserExist.id,
+        otp: checkUserExist.otp,
+        otpExpiresAt: checkUserExist.otpExpiresAt,
+        loginFailedAttempts: {
+          lt: 5,
+        },
+        otpFailedAttempts: {
+          lt: 5,
+        },
       },
       data: {
         otp: otp,
-        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        otpExpiresAt,
       },
     });
+
+    if (updateOtp.count !== 1) {
+      const updatedUser = await this.prismaService.users.findUnique({
+        where: { id: checkUserExist.id },
+        select: {
+          otp: true,
+          otpExpiresAt: true,
+          loginFailedAttempts: true,
+          otpFailedAttempts: true,
+        },
+      });
+      const isUpdatedAccountLocked =
+        (updatedUser?.loginFailedAttempts ?? 5) >= 5 ||
+        (updatedUser?.otpFailedAttempts ?? 5) >= 5;
+      if (isUpdatedAccountLocked) {
+        throw new UnauthorizedException({
+          message:
+            'Your account is locked. Please contact your administrator for assistance.',
+          error: 'Unauthorized',
+          statusCode: 401,
+          code: 'ACCOUNT_LOCKED',
+        });
+      }
+
+      if (updatedUser?.otp && updatedUser.otpExpiresAt) {
+        return {
+          message: 'OTP Sent to email',
+          otpExpiresAt: updatedUser.otpExpiresAt,
+          resendAvailableAt: new Date(
+            updatedUser.otpExpiresAt.getTime() - 4 * 60 * 1000,
+          ),
+        };
+      }
+
+      throw new BadRequestException(
+        'Unable to create an OTP. Please try again',
+      );
+    }
+
     await this.mailService.sendOtp({ email: checkUserExist.email, otp: otp });
     return {
       message: 'OTP Sent to email',
+      otpExpiresAt,
+      resendAvailableAt,
     };
   }
 
   async verifyOtp(credentials: VerifyOtpAuthDto) {
-    const checkCredentialValid = await this.prismaService.users.findFirst({
+    const currentDate = new Date();
+    const checkUserExist = await this.prismaService.users.findFirst({
       where: {
         email: credentials.email,
-        otp: credentials.otp,
       },
     });
-    if (!checkCredentialValid)
-      throw new UnauthorizedException('Invalid credentials');
+    if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
 
-    if (
-      !checkCredentialValid.otpExpiresAt ||
-      checkCredentialValid.otpExpiresAt < new Date()
-    ) {
-      throw new UnauthorizedException('OTP expired');
+    const isAccountLocked =
+      checkUserExist.loginFailedAttempts >= 5 ||
+      checkUserExist.otpFailedAttempts >= 5;
+    if (isAccountLocked) {
+      throw new UnauthorizedException({
+        message:
+          'Your account is locked. Please contact your administrator for assistance.',
+        error: 'Unauthorized',
+        statusCode: 401,
+        code: 'ACCOUNT_LOCKED',
+      });
     }
 
-    await this.prismaService.users.update({
-      where: { id: checkCredentialValid.id },
-      data: { otp: null, otpExpiresAt: null, status: 'ACTIVE' },
+    if (
+      !checkUserExist.otp ||
+      !checkUserExist.otpExpiresAt ||
+      checkUserExist.otpExpiresAt <= currentDate
+    ) {
+      throw new UnauthorizedException({
+        message: 'OTP expired',
+        error: 'Unauthorized',
+        statusCode: 401,
+        code: 'OTP_EXPIRED',
+      });
+    }
+
+    if (checkUserExist.otp !== credentials.otp) {
+      const failedAttempt = await this.prismaService.users.updateMany({
+        where: {
+          id: checkUserExist.id,
+          otp: checkUserExist.otp,
+          otpExpiresAt: {
+            gt: currentDate,
+          },
+          loginFailedAttempts: {
+            lt: 5,
+          },
+          otpFailedAttempts: {
+            lt: 5,
+          },
+        },
+        data: {
+          otpFailedAttempts: {
+            increment: 1,
+          },
+        },
+      });
+
+      if (failedAttempt.count !== 1) {
+        throw new UnauthorizedException('Invalid or expired OTP');
+      }
+
+      const updatedUser = await this.prismaService.users.findUnique({
+        where: { id: checkUserExist.id },
+        select: {
+          loginFailedAttempts: true,
+          otpFailedAttempts: true,
+        },
+      });
+      const updatedOtpFailedAttempts = updatedUser?.otpFailedAttempts ?? 5;
+      const isUpdatedAccountLocked =
+        (updatedUser?.loginFailedAttempts ?? 5) >= 5 ||
+        updatedOtpFailedAttempts >= 5;
+
+      if (isUpdatedAccountLocked) {
+        throw new UnauthorizedException({
+          message:
+            'Your account is locked. Please contact your administrator for assistance.',
+          error: 'Unauthorized',
+          statusCode: 401,
+          code: 'ACCOUNT_LOCKED',
+        });
+      }
+
+      const remainingAttempts = 5 - updatedOtpFailedAttempts;
+      throw new UnauthorizedException({
+        message: `Invalid OTP. ${remainingAttempts} attempts remaining.`,
+        error: 'Unauthorized',
+        statusCode: 401,
+        code: 'INVALID_OTP',
+        data: {
+          remainingAttempts,
+        },
+      });
+    }
+
+    const consumeOtp = await this.prismaService.users.updateMany({
+      where: {
+        id: checkUserExist.id,
+        otp: credentials.otp,
+        otpExpiresAt: {
+          gt: currentDate,
+        },
+        loginFailedAttempts: {
+          lt: 5,
+        },
+        otpFailedAttempts: {
+          lt: 5,
+        },
+      },
+      data: {
+        otp: null,
+        otpExpiresAt: null,
+        otpFailedAttempts: 0,
+        status: 'ACTIVE',
+      },
     });
 
+    if (consumeOtp.count !== 1) {
+      throw new UnauthorizedException('Invalid or expired OTP');
+    }
+
     const payload = {
-      sub: checkCredentialValid.id,
-      email: checkCredentialValid.email,
-      role: checkCredentialValid.role,
-      firstName: checkCredentialValid.firstName,
-      lastName: checkCredentialValid.lastName,
-      middleName: checkCredentialValid.middleName,
+      sub: checkUserExist.id,
+      email: checkUserExist.email,
+      role: checkUserExist.role,
+      firstName: checkUserExist.firstName,
+      lastName: checkUserExist.lastName,
+      middleName: checkUserExist.middleName,
     };
     const jwtToken = await this.jwtService.signAsync(payload);
     return {
@@ -145,15 +311,37 @@ export class AuthService {
     });
     if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
 
-    if (!checkUserExist.otpExpiresAt) {
+    const isAccountLocked =
+      checkUserExist.loginFailedAttempts >= 5 ||
+      checkUserExist.otpFailedAttempts >= 5;
+    if (isAccountLocked) {
+      throw new UnauthorizedException({
+        message:
+          'Your account is locked. Please contact your administrator for assistance.',
+        error: 'Unauthorized',
+        statusCode: 401,
+        code: 'ACCOUNT_LOCKED',
+      });
+    }
+
+    if (!checkUserExist.otp || !checkUserExist.otpExpiresAt) {
       throw new BadRequestException('No OTP request found. Please login first');
     }
 
-    if (
-      checkUserExist.otpExpiresAt > new Date() &&
-      checkUserExist.otpExpiresAt < new Date(Date.now() + 4 * 60 * 1000)
-    ) {
-      throw new BadRequestException('Please wait before requesting a new OTP');
+    const currentDate = new Date();
+    const resendAvailableAt = new Date(
+      checkUserExist.otpExpiresAt.getTime() - 4 * 60 * 1000,
+    );
+    if (currentDate < resendAvailableAt) {
+      throw new BadRequestException({
+        message: 'Please wait before requesting a new OTP',
+        error: 'Bad Request',
+        statusCode: 400,
+        code: 'OTP_RESEND_COOLDOWN',
+        data: {
+          resendAvailableAt,
+        },
+      });
     }
 
     const otp = otpGenerator.generate(6, {
@@ -162,17 +350,76 @@ export class AuthService {
       specialChars: false,
     });
 
-    await this.prismaService.users.update({
-      where: { id: checkUserExist.id },
+    const otpExpiresAt = new Date(currentDate.getTime() + 5 * 60 * 1000);
+    const nextResendAvailableAt = new Date(
+      otpExpiresAt.getTime() - 4 * 60 * 1000,
+    );
+    const updateOtp = await this.prismaService.users.updateMany({
+      where: {
+        id: checkUserExist.id,
+        otp: checkUserExist.otp,
+        otpExpiresAt: checkUserExist.otpExpiresAt,
+        loginFailedAttempts: {
+          lt: 5,
+        },
+        otpFailedAttempts: {
+          lt: 5,
+        },
+      },
       data: {
         otp,
-        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        otpExpiresAt,
       },
     });
 
+    if (updateOtp.count !== 1) {
+      const updatedUser = await this.prismaService.users.findUnique({
+        where: { id: checkUserExist.id },
+        select: {
+          otp: true,
+          otpExpiresAt: true,
+          loginFailedAttempts: true,
+          otpFailedAttempts: true,
+        },
+      });
+      const isUpdatedAccountLocked =
+        (updatedUser?.loginFailedAttempts ?? 5) >= 5 ||
+        (updatedUser?.otpFailedAttempts ?? 5) >= 5;
+      if (isUpdatedAccountLocked) {
+        throw new UnauthorizedException({
+          message:
+            'Your account is locked. Please contact your administrator for assistance.',
+          error: 'Unauthorized',
+          statusCode: 401,
+          code: 'ACCOUNT_LOCKED',
+        });
+      }
+
+      if (updatedUser?.otp && updatedUser.otpExpiresAt) {
+        const updatedResendAvailableAt = new Date(
+          updatedUser.otpExpiresAt.getTime() - 4 * 60 * 1000,
+        );
+        throw new BadRequestException({
+          message: 'Please wait before requesting a new OTP',
+          error: 'Bad Request',
+          statusCode: 400,
+          code: 'OTP_RESEND_COOLDOWN',
+          data: {
+            resendAvailableAt: updatedResendAvailableAt,
+          },
+        });
+      }
+
+      throw new BadRequestException('No OTP request found. Please login first');
+    }
+
     await this.mailService.sendOtp({ email: checkUserExist.email, otp });
 
-    return { message: 'OTP resent to email' };
+    return {
+      message: 'OTP resent to email',
+      otpExpiresAt,
+      resendAvailableAt: nextResendAvailableAt,
+    };
   }
 
   async forgotPassword(email: string) {
