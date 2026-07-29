@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Req,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginAuthDto } from './dto/login-auth.dto';
 import { Public } from './auth.decorator';
@@ -14,6 +6,7 @@ import { VerifyOtpAuthDto } from './dto/verify-otp-auth.dto';
 import type { Request } from 'express';
 import { JwtPayload } from 'jsonwebtoken';
 import { ResetPasswordAuthDto } from './dto/reset-password.auth.dto';
+import { ResendOtpAuthDto } from './dto/resend-otp-auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -33,8 +26,8 @@ export class AuthController {
 
   @Public()
   @Post('resend-otp')
-  resendOtp(@Body('email') email: string) {
-    return this.authService.resendOtp(email);
+  resendOtp(@Body() credentials: ResendOtpAuthDto) {
+    return this.authService.resendOtp(credentials.email);
   }
 
   @Get('validate')
