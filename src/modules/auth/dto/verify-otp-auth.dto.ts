@@ -1,4 +1,4 @@
-import { IsEmail, IsString, Length } from 'class-validator';
+import { IsEmail, IsString, Length, Matches } from 'class-validator';
 
 export class VerifyOtpAuthDto {
   @IsEmail()
@@ -6,5 +6,6 @@ export class VerifyOtpAuthDto {
 
   @IsString()
   @Length(6, 6)
+  @Matches(/^\d{6}$/)
   otp: string;
 }

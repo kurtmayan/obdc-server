@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InviteUsersDto } from './dto/invite-users.dto';
 import { MailService } from '../mail/mail.service';
 import * as bcrypt from 'bcrypt';
+import generator from 'generate-password';
 
 @Injectable()
 export class UsersService {
@@ -30,6 +31,7 @@ export class UsersService {
         contactNumber: credentials.contactNumber,
         password: hashedPassword,
         status: 'PENDING',
+        lastUserPassword: [hashedPassword],
       },
     });
     if (!data) {
@@ -45,8 +47,17 @@ export class UsersService {
     };
   }
 
-  private generateDefaultPassword(): string {
-    return Math.random().toString(36).slice(-8);
+  private generateDefaultPassword() {
+    const password = generator.generate({
+      length: 16,
+      numbers: true,
+      symbols: true,
+      uppercase: true,
+      lowercase: true,
+      strict: true,
+      excludeSimilarCharacters: true,
+    });
+    return password;
   }
 
   async getAllUsers() {
