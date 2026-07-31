@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as XLSX from 'xlsx';
+import { Prisma } from 'src/generated/prisma/client';
+import { FindGeneralRecordDto } from './dto/find-general-record.dto';
 
 interface TempRecord {
   rowNumber: number;
@@ -14,6 +16,14 @@ interface TempRecord {
 interface ValidRecord extends TempRecord {
   storeId: string;
 }
+
+type StoreIdRow = {
+  id: string;
+};
+
+type CountRow = {
+  count: bigint;
+};
 
 @Injectable()
 export class AttendanceService {
@@ -35,28 +45,161 @@ export class AttendanceService {
     });
   }
 
-  async getGeneralRecord() {
-    return await this.prismaService.stores.findMany({
-      orderBy: {
-        createdAt: 'desc',
-      },
-      include: {
-        storeSyncRecords: {
-          orderBy: {
-            syncDate: 'desc',
-          },
-          take: 1,
-        },
-        devices: {
-          orderBy: {
-            createdAt: 'desc',
-          },
-          take: 1,
-        },
-      },
+  async getGeneralRecord({
+    page,
+    pageSize,
+    q,
+    division,
+    cluster,
+    status,
+    startDate,
+    endDate,
+  }: FindGeneralRecordDto) {
+    const take = pageSize;
+    const skip = (page - 1) * take;
+    const where = this.buildGeneralRecordWhere({
+      q,
+      division,
+      cluster,
+      status,
+      startDate,
+      endDate,
     });
+
+    const baseQuery = Prisma.sql`
+      FROM "Stores" s
+      LEFT JOIN LATERAL (
+        SELECT ssr."id", ssr."status", ssr."syncDate"
+        FROM "StoreSyncRecord" ssr
+        WHERE ssr."storesId" = s."id"
+        ORDER BY ssr."syncDate" DESC
+        LIMIT 1
+      ) latest ON true
+      ${where}
+    `;
+
+    const [storeIdRows, countRows] = await this.prismaService.$transaction([
+      this.prismaService.$queryRaw<StoreIdRow[]>(Prisma.sql`
+        SELECT s."id"
+        ${baseQuery}
+        ORDER BY s."createdAt" DESC
+        OFFSET ${skip}
+        LIMIT ${take}
+      `),
+      this.prismaService.$queryRaw<CountRow[]>(Prisma.sql`
+        SELECT COUNT(*)::bigint AS count
+        ${baseQuery}
+      `),
+    ]);
+
+    const storeIds = storeIdRows.map(({ id }) => id);
+    const count = Number(countRows[0]?.count ?? 0);
+
+    const stores = storeIds.length
+      ? await this.prismaService.stores.findMany({
+          where: {
+            id: {
+              in: storeIds,
+            },
+          },
+          include: {
+            storeSyncRecords: {
+              orderBy: {
+                syncDate: 'desc',
+              },
+              take: 1,
+            },
+            devices: {
+              orderBy: {
+                createdAt: 'desc',
+              },
+              take: 1,
+            },
+          },
+        })
+      : [];
+
+    const storeById = new Map(stores.map((store) => [store.id, store]));
+    const items = storeIds
+      .map((id) => storeById.get(id))
+      .filter((store): store is (typeof stores)[number] => Boolean(store));
+
+    return {
+      items,
+      page,
+      pageSize: take,
+      totalItems: count,
+      totalPages: Math.ceil(count / take),
+    };
   }
 
+  private buildGeneralRecordWhere({
+    q,
+    division,
+    cluster,
+    status,
+    startDate,
+    endDate,
+  }: Pick<
+    FindGeneralRecordDto,
+    'q' | 'division' | 'cluster' | 'status' | 'startDate' | 'endDate'
+  >) {
+    const conditions: Prisma.Sql[] = [];
+    const search = q?.trim();
+
+    if (search) {
+      const term = `%${search}%`;
+      conditions.push(Prisma.sql`
+        (
+          s."name" ILIKE ${term}
+          OR s."location" ILIKE ${term}
+          OR s."code" ILIKE ${term}
+        )
+      `);
+    }
+
+    if (division) {
+      conditions.push(Prisma.sql`s."division" = ${division}::"Division"`);
+    }
+
+    if (cluster) {
+      conditions.push(Prisma.sql`s."cluster" = ${cluster}::"Cluster"`);
+    }
+
+    if (status) {
+      conditions.push(Prisma.sql`latest."status" = ${status}::"SyncStatus"`);
+    }
+
+    if (startDate) {
+      conditions.push(
+        Prisma.sql`latest."syncDate" >= ${this.toStartOfDay(startDate)}`,
+      );
+    }
+
+    if (endDate) {
+      conditions.push(
+        Prisma.sql`latest."syncDate" <= ${this.toEndOfDay(endDate)}`,
+      );
+    }
+
+    if (conditions.length === 0) {
+      return Prisma.empty;
+    }
+
+    return Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+  }
+
+  private toStartOfDay(value: string) {
+    const date = new Date(value);
+    date.setUTCHours(0, 0, 0, 0);
+    return date;
+  }
+
+  private toEndOfDay(value: string) {
+    const date = new Date(value);
+    date.setUTCHours(23, 59, 59, 999);
+    return date;
+  }
   async getStoreRecord(id: string) {
     const storeSync = await this.prismaService.storeSyncRecord.findMany({
       orderBy: {
