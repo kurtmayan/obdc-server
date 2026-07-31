@@ -18,25 +18,25 @@ import { FindAllDeviceDto } from './dto/find-all.dto';
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
 
-  @Public()
+  // @Public()
   @Post()
   create(@Body() createDeviceDto: CreateDeviceDto) {
     return this.deviceService.create(createDeviceDto);
   }
 
-  @Public()
+  // @Public()
   @Get()
   findAll(@Query() query: FindAllDeviceDto) {
     return this.deviceService.findAll(query);
   }
 
-  @Public()
+  // @Public()
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.deviceService.findOne(id);
   }
 
-  @Public()
+  // @Public()
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDeviceDto) {
     return this.deviceService.update(id, updateDeviceDto);
