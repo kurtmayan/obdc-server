@@ -21,7 +21,7 @@ import { SqsQueueModule } from './modules/sqs-queue/sqs-queue.module';
 import { TestingModule } from './modules/testing/testing.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditTrailModule } from './modules/audit-trail/audit-trail.module';
-import { AuditTrailInterceptor } from './modules/audit-trail/interceptors/audit-trail.interceptor';
+import { AuditTrailInterceptor } from './modules/audit-trail/audit-trail.interceptor';
 
 @Module({
   imports: [

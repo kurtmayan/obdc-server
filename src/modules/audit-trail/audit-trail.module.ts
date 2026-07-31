@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuditTrailService } from './audit-trail.service';
-import { AuditTrailInterceptor } from './interceptors/audit-trail.interceptor';
+import { AuditTrailInterceptor } from './audit-trail.interceptor';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
