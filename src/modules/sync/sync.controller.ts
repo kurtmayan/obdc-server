@@ -25,7 +25,7 @@ export class SyncController {
     return this.service.storeSyncRecord(data);
   }
 
-  @Public()
+  // @Public()
   @Get('export')
   async exportAttendance(
     @Res() res: Response,
@@ -56,7 +56,7 @@ export class SyncController {
     return this.service.getSyncRecordsByDeviceSerialNumbers(serialNumbers);
   }
 
-  @Public()
+  // @Public()
   @Post('excel')
   @UseInterceptors(FileInterceptor('file'))
   async excelSyncRecord(@UploadedFile() file: Express.Multer.File) {
