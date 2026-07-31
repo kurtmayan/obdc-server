@@ -32,8 +32,14 @@ export class SyncController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @Query('format') format?: 'xlsx' | 'csv',
+    @Query('storeIds') storeIds?: string,
   ): Promise<void> {
-    const buffer = await this.service.export(startDate, endDate, format);
+    const buffer = await this.service.export(
+      startDate,
+      endDate,
+      format,
+      storeIds,
+    );
 
     const isCSV = format === 'csv';
     const contentType = isCSV
