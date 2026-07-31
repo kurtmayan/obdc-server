@@ -153,6 +153,7 @@ model Users {
   passwordResetExpiresAt DateTime?
   contactNumber          String?
   status                 UserStatus @default(PENDING)
+  lastPasswordUpdate     DateTime   @default(now())
   createdAt              DateTime   @default(now())
   updatedAt              DateTime   @updatedAt
 }

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +14,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ResetPasswordAuthDto } from './dto/reset-password.auth.dto';
 import crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
+import { JwtPayload } from 'jsonwebtoken';
 
 @Injectable()
 export class AuthService {
@@ -43,6 +45,19 @@ export class AuthService {
     );
     if (!isMatch) throw new UnauthorizedException('Invalid credentials');
 
+    if (this.isPasswordExpired(checkUserExist.lastPasswordUpdate)) {
+      const resetToken = await this.createPasswordResetToken(checkUserExist.id);
+      throw new UnauthorizedException({
+        statusCode: 401,
+        error: 'Unauthorized',
+        message: 'Password has expired. Please update your password.',
+        code: 'PASSWORD_EXPIRED',
+        data: {
+          token: resetToken,
+        },
+      });
+    }
+
     const otp = otpGenerator.generate(6, {
       upperCaseAlphabets: false,
       lowerCaseAlphabets: false,
@@ -54,7 +69,7 @@ export class AuthService {
       },
       data: {
         otp: otp,
-        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000), // 5 minutes OTP expiration
+        otpExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
     });
     await this.mailService.sendOtp({ email: checkUserExist.email, otp: otp });
@@ -208,9 +223,59 @@ export class AuthService {
         password: hashedPassword,
         passwordResetToken: null,
         passwordResetExpiresAt: null,
+        lastPasswordUpdate: new Date(),
       },
     });
 
     return { message: 'Password reset successfully' };
+  }
+
+  async validateToken(payload: JwtPayload) {
+    const user = await this.prismaService.users.findUnique({
+      where: {
+        id: payload.sub,
+      },
+      select: {
+        lastPasswordUpdate: true,
+      },
+    });
+    return {
+      ...payload,
+      lastPasswordUpdate: user?.lastPasswordUpdate,
+    };
+  }
+
+  async generatePasswordResetToken(id: string) {
+    const user = await this.prismaService.users.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User with this ID does not exist');
+    }
+    const token = await this.createPasswordResetToken(user.id);
+    return {
+      token,
+      message: 'Password reset token generated successfully',
+    };
+  }
+
+  private async createPasswordResetToken(userId: string): Promise<string> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    await this.prismaService.users.update({
+      where: { id: userId },
+      data: {
+        passwordResetToken: hashedToken,
+        passwordResetExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      },
+    });
+    return token;
+  }
+
+  private isPasswordExpired(lastPasswordUpdate: Date): boolean {
+    const expirationDate = new Date(lastPasswordUpdate);
+    expirationDate.setDate(expirationDate.getDate() + 90);
+    return new Date() >= expirationDate;
   }
 }
