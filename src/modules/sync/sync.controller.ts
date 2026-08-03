@@ -59,7 +59,7 @@ export class SyncController {
   }
 
   @Public()
-  @Get('store-status/export')
+  @Post('store-status/export')
   async exportStoreSyncStatus(
     @Query() query: ExportStoreSyncStatusDto,
     @Res() res: Response,
