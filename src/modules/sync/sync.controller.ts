@@ -14,6 +14,10 @@ import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
 import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import {
+  ExportStoreSyncStatusDto,
+  ExportStoreSyncStatusFormat,
+} from './dto/export-store-sync-status.dto';
 
 @Controller('sync')
 export class SyncController {
@@ -46,6 +50,26 @@ export class SyncController {
       ? 'text/csv'
       : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     const filename = isCSV ? 'attendance-export.csv' : 'attendance-export.xlsx';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length.toString());
+
+    res.end(buffer);
+  }
+
+  @Public()
+  @Get('store-status/export')
+  async exportStoreSyncStatus(
+    @Query() query: ExportStoreSyncStatusDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer: Buffer = await this.service.exportStoreSyncStatus(query);
+    const isCSV = query.format === ExportStoreSyncStatusFormat.CSV;
+    const contentType = isCSV
+      ? 'text/csv'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const filename = `sync-status-${query.startDate}-to-${query.endDate}.${query.format}`;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
