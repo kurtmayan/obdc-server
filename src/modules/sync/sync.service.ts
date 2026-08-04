@@ -9,8 +9,14 @@ import type {
   CreateStoreSyncRecord,
   SyncRecord,
 } from './dto/create-store-sync-record.dto';
+import {
+  eachDayOfInterval,
+  format as formatDate,
+  isValid,
+  parseISO,
+} from 'date-fns';
 import * as ExcelJS from 'exceljs';
-import { formatInTimeZone } from 'date-fns-tz';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -35,6 +41,28 @@ type ExportRow = {
   location: string;
 };
 
+type StoreSyncStatusExportQuery = {
+  startDate: string;
+  endDate: string;
+  format?: string;
+};
+
+type StoreSyncStatusAttempt = {
+  syncDate: Date;
+  status: SyncStatus;
+  totalRecords: number;
+};
+
+type StoreSyncStatusReportStatus = 'Pending' | 'Success' | 'Processing';
+
+type StoreSyncStatusExportRow = {
+  attendanceDate: string;
+  syncedAt: string;
+  locationName: string;
+  totalRecords: number;
+  syncStatus: StoreSyncStatusReportStatus;
+};
+
 const storeSyncRecordSelect = {
   id: true,
   storesId: true,
@@ -46,6 +74,14 @@ type QueuedStoreSyncRecord = StoreSyncRecordGetPayload<{
 }>;
 
 const SYNC_CHUNK_ATTENDANCE_RECORD_LIMIT = 500;
+const SYNC_STATUS_REPORT_TIME_ZONE = 'Asia/Manila';
+const SYNC_STATUS_REPORT_HEADERS = [
+  'Attendance Date',
+  'Date and Time Synced',
+  'Location Name',
+  'Total Records',
+  'Sync Status',
+] as const;
 
 @Injectable()
 export class SyncService {
@@ -253,6 +289,209 @@ export class SyncService {
       storeIds,
       employeeIds,
     );
+  }
+
+  async exportStoreSyncStatus({
+    startDate,
+    endDate,
+    format = 'xlsx',
+  }: StoreSyncStatusExportQuery): Promise<Buffer> {
+    if (format !== 'xlsx' && format !== 'csv') {
+      throw new BadRequestException('format must be either xlsx or csv');
+    }
+
+    const startCalendarDate = this.parseDateOnly(startDate, 'startDate');
+    const endCalendarDate = this.parseDateOnly(endDate, 'endDate');
+
+    if (startCalendarDate.getTime() > endCalendarDate.getTime()) {
+      throw new BadRequestException(
+        'startDate must be before or equal to endDate',
+      );
+    }
+
+    const start = fromZonedTime(
+      `${startDate}T00:00:00.000`,
+      SYNC_STATUS_REPORT_TIME_ZONE,
+    );
+    const end = fromZonedTime(
+      `${endDate}T23:59:59.999`,
+      SYNC_STATUS_REPORT_TIME_ZONE,
+    );
+    const dateKeys = eachDayOfInterval({
+      start: startCalendarDate,
+      end: endCalendarDate,
+    }).map((date) => formatDate(date, 'yyyy-MM-dd'));
+
+    const stores = await this.prisma.stores.findMany({
+      orderBy: [{ location: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+      select: {
+        id: true,
+        location: true,
+        storeSyncRecords: {
+          where: {
+            syncDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          select: {
+            syncDate: true,
+            status: true,
+            totalRecords: true,
+          },
+        },
+      },
+    });
+
+    const orderedStores = [...stores].sort(
+      (first, second) =>
+        first.location.localeCompare(second.location) ||
+        first.id.localeCompare(second.id),
+    );
+    const attemptsByStoreAndDate = new Map<
+      string,
+      Map<string, StoreSyncStatusAttempt[]>
+    >();
+
+    for (const store of orderedStores) {
+      const attemptsByDate = new Map<string, StoreSyncStatusAttempt[]>();
+
+      for (const attempt of store.storeSyncRecords) {
+        const dateKey = formatInTimeZone(
+          attempt.syncDate,
+          SYNC_STATUS_REPORT_TIME_ZONE,
+          'yyyy-MM-dd',
+        );
+        const dailyAttempts = attemptsByDate.get(dateKey) ?? [];
+        dailyAttempts.push(attempt);
+        attemptsByDate.set(dateKey, dailyAttempts);
+      }
+
+      attemptsByStoreAndDate.set(store.id, attemptsByDate);
+    }
+
+    const rows: StoreSyncStatusExportRow[] = [];
+
+    for (const dateKey of [...dateKeys].reverse()) {
+      for (const store of orderedStores) {
+        const attempts =
+          attemptsByStoreAndDate.get(store.id)?.get(dateKey) ?? [];
+        const latestSuccess = this.findLatestAttempt(
+          attempts.filter((attempt) => attempt.status === SyncStatus.SUCCESS),
+        );
+        let status: StoreSyncStatusReportStatus;
+        let representativeAttempt: StoreSyncStatusAttempt | undefined;
+
+        if (latestSuccess) {
+          status = 'Success';
+          representativeAttempt = latestSuccess;
+        } else {
+          const latestProcessing = this.findLatestAttempt(
+            attempts.filter(
+              (attempt) => attempt.status === SyncStatus.PROCESSING,
+            ),
+          );
+
+          if (latestProcessing) {
+            status = 'Processing';
+            representativeAttempt = latestProcessing;
+          } else {
+            status = 'Pending';
+            representativeAttempt = this.findLatestAttempt(attempts);
+          }
+        }
+
+        rows.push({
+          attendanceDate: formatDate(parseISO(dateKey), 'MM/dd/yyyy'),
+          syncedAt: representativeAttempt
+            ? formatInTimeZone(
+                representativeAttempt.syncDate,
+                SYNC_STATUS_REPORT_TIME_ZONE,
+                'MM/dd/yyyy hh:mm:ss a',
+              )
+            : '',
+          locationName: store.location,
+          totalRecords: attempts.reduce(
+            (total, attempt) => total + attempt.totalRecords,
+            0,
+          ),
+          syncStatus: status,
+        });
+      }
+    }
+
+    if (format === 'csv') {
+      const csvRows: Array<Array<string | number>> = [
+        [...SYNC_STATUS_REPORT_HEADERS],
+      ];
+
+      rows.forEach((record) => {
+        csvRows.push([
+          record.attendanceDate,
+          record.syncedAt,
+          record.locationName,
+          record.totalRecords,
+          record.syncStatus,
+        ]);
+      });
+
+      const csvContent = csvRows
+        .map((row) =>
+          row.map((cell) => this.escapeCsvCell(String(cell))).join(','),
+        )
+        .join('\n');
+
+      return Buffer.from(csvContent, 'utf-8');
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sync Status');
+
+    sheet.columns = [
+      { header: SYNC_STATUS_REPORT_HEADERS[0], key: 'attendanceDate' },
+      { header: SYNC_STATUS_REPORT_HEADERS[1], key: 'syncedAt' },
+      { header: SYNC_STATUS_REPORT_HEADERS[2], key: 'locationName' },
+      { header: SYNC_STATUS_REPORT_HEADERS[3], key: 'totalRecords' },
+      { header: SYNC_STATUS_REPORT_HEADERS[4], key: 'syncStatus' },
+    ];
+
+    const columnWidths = SYNC_STATUS_REPORT_HEADERS.map(
+      (header) => header.length + 2,
+    );
+
+    rows.forEach((record) => {
+      sheet.addRow(record);
+
+      Object.values(record).forEach((value, index) => {
+        columnWidths[index] = Math.min(
+          Math.max(columnWidths[index], String(value).length + 2),
+          50,
+        );
+      });
+    });
+
+    const headerRow = sheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' },
+      };
+    });
+
+    sheet.columns.forEach((column, index) => {
+      column.width = columnWidths[index];
+    });
+
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+    sheet.autoFilter = {
+      from: 'E1',
+      to: `E${Math.max(rows.length + 1, 1)}`,
+    };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
   async excelSyncRecord(file: Express.Multer.File) {
@@ -600,6 +839,30 @@ export class SyncService {
 
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
+  }
+
+  private parseDateOnly(value: string, fieldName: string): Date {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(`${fieldName} must use YYYY-MM-DD format`);
+    }
+
+    const parsed = parseISO(value);
+
+    if (!isValid(parsed) || formatDate(parsed, 'yyyy-MM-dd') !== value) {
+      throw new BadRequestException(`${fieldName} must be a valid date`);
+    }
+
+    return parsed;
+  }
+
+  private findLatestAttempt(
+    attempts: StoreSyncStatusAttempt[],
+  ): StoreSyncStatusAttempt | undefined {
+    return attempts.reduce<StoreSyncStatusAttempt | undefined>(
+      (latest, attempt) =>
+        !latest || attempt.syncDate >= latest.syncDate ? attempt : latest,
+      undefined,
+    );
   }
 
   private getCellText(value: ExcelJS.CellValue): string | undefined {
