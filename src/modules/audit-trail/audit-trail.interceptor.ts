@@ -32,8 +32,6 @@ export class AuditTrailInterceptor implements NestInterceptor {
     const ipAddress = request.ip ?? request.socket.remoteAddress ?? null;
     const userAgent = request.get('user-agent') ?? null;
 
-    console.log('AUDIT REQUEST USER:', request.user);
-
     const response = context.switchToHttp().getResponse<Response>();
 
     const action =
