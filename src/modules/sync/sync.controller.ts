@@ -68,6 +68,7 @@ export class SyncController {
   @Get('employee-lookup')
   employeeLookup(@Query() query: EmployeeLookupDto) {
     return this.service.employeeLookup(query);
+  
   @Post('store-status/export')
   async exportStoreSyncStatus(
     @Query() query: ExportStoreSyncStatusDto,
