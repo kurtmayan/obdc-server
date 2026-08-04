@@ -23,6 +23,7 @@ import type {
 import { ConfigService } from '@nestjs/config';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 import { Prisma } from 'src/generated/prisma/client';
+import { EmployeeLookupDto } from './dto/employee-lookup.dto';
 
 type ExportFormat = 'xlsx' | 'csv';
 
@@ -243,8 +244,15 @@ export class SyncService {
     endDate?: string,
     format: ExportFormat = 'xlsx',
     storeIds?: string,
+    employeeIds?: string,
   ): Promise<Buffer> {
-    return this.generateExport(startDate, endDate, format, storeIds);
+    return this.generateExport(
+      startDate,
+      endDate,
+      format,
+      storeIds,
+      employeeIds,
+    );
   }
 
   async excelSyncRecord(file: Express.Multer.File) {
@@ -256,7 +264,7 @@ export class SyncService {
   }
 
   private decryptEncryptedExportFile(encryptedBuffer: Buffer): Buffer {
-    const keyBase64 = this.configService.get('OBDC_ENCRYPTION_KEY');
+    const keyBase64 = this.configService.get<string>('OBDC_ENCRYPTION_KEY');
     console.log(keyBase64);
 
     if (!keyBase64) {
@@ -442,6 +450,7 @@ export class SyncService {
     endDate?: string,
     format: ExportFormat = 'xlsx',
     storeIds?: string,
+    employeeIds?: string,
   ): Promise<Buffer> {
     // Parse dates properly - create date at midnight UTC
     const start = startDate
@@ -450,6 +459,7 @@ export class SyncService {
 
     const end = endDate ? new Date(`${endDate}T23:59:59.999Z`) : new Date();
     const selectedStoreIds = this.parseDelimitedIds(storeIds);
+    const selectedEmployeeIds = this.parseDelimitedIds(employeeIds);
 
     const where: Prisma.AttendanceRecordWhereInput = {
       logDate: {
@@ -462,6 +472,13 @@ export class SyncService {
               storesId: {
                 in: selectedStoreIds,
               },
+            },
+          }
+        : {}),
+      ...(selectedEmployeeIds.length > 0
+        ? {
+            userId: {
+              in: selectedEmployeeIds,
             },
           }
         : {}),
@@ -484,6 +501,10 @@ export class SyncService {
         },
       },
     });
+
+    console.log('=======================');
+    console.log(attendanceRecords.length);
+    console.log('=======================');
 
     // Transform records to common format
     const transformedData: ExportRow[] = attendanceRecords.map((record) => {
@@ -634,7 +655,59 @@ export class SyncService {
   private parseDelimitedIds(value?: string): string[] {
     if (!value) return [];
 
-    return [...new Set(value.split(',').map((id) => id.trim()).filter(Boolean))];
+    return [
+      ...new Set(
+        value
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ];
+  }
+
+  async employeeLookup({ q, storeIds }: EmployeeLookupDto) {
+    const selectedStoreIds = this.parseDelimitedIds(storeIds);
+
+    if (selectedStoreIds.length === 0) {
+      return {
+        items: [],
+      };
+    }
+
+    const where: Prisma.AttendanceRecordWhereInput = {
+      storeSyncRecords: {
+        storesId: {
+          in: selectedStoreIds,
+        },
+      },
+      ...(q
+        ? {
+            userId: {
+              contains: q,
+              mode: 'insensitive' as const,
+            },
+          }
+        : {}),
+    };
+
+    const items = await this.prisma.attendanceRecord.findMany({
+      where,
+      distinct: ['userId'],
+      take: 5,
+      orderBy: {
+        userId: 'asc',
+      },
+      select: {
+        userId: true,
+      },
+    });
+
+    return {
+      items: items.map((item) => ({
+        id: item.userId,
+        employeeId: item.userId,
+      })),
+    };
   }
 
   private mapLogTypeToExportStatus(logType: number): ExportRow['status'] {

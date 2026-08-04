@@ -11,9 +11,12 @@ import {
 } from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { CreateStoreSyncRecord } from './dto/create-store-sync-record.dto';
+import { EmployeeLookupDto } from './dto/employee-lookup.dto';
 import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
+import { Roles } from '../roles/roles.decorator';
+import { Role } from 'src/generated/prisma/browser';
 
 @Controller('sync')
 export class SyncController {
@@ -25,7 +28,8 @@ export class SyncController {
     return this.service.storeSyncRecord(data);
   }
 
-  // @Public()
+  @Public()
+  // @Roles(Role.SUPERADMIN)
   @Get('export')
   async exportAttendance(
     @Res() res: Response,
@@ -33,12 +37,14 @@ export class SyncController {
     @Query('endDate') endDate?: string,
     @Query('format') format?: 'xlsx' | 'csv',
     @Query('storeIds') storeIds?: string,
+    @Query('employeeIds') employeeIds?: string,
   ): Promise<void> {
     const buffer = await this.service.export(
       startDate,
       endDate,
       format,
       storeIds,
+      employeeIds,
     );
 
     const isCSV = format === 'csv';
@@ -52,6 +58,12 @@ export class SyncController {
     res.setHeader('Content-Length', buffer.length.toString());
 
     res.end(buffer);
+  }
+
+  @Public()
+  @Get('employee-lookup')
+  employeeLookup(@Query() query: EmployeeLookupDto) {
+    return this.service.employeeLookup(query);
   }
 
   @Public()
