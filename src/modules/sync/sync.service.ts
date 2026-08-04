@@ -502,10 +502,6 @@ export class SyncService {
       },
     });
 
-    console.log('=======================');
-    console.log(attendanceRecords.length);
-    console.log('=======================');
-
     // Transform records to common format
     const transformedData: ExportRow[] = attendanceRecords.map((record) => {
       const formattedDate = formatInTimeZone(
