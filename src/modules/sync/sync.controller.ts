@@ -57,8 +57,7 @@ export class SyncController {
 
     res.end(buffer);
   }
-
-  @Public()
+  
   @Post('store-status/export')
   async exportStoreSyncStatus(
     @Query() query: ExportStoreSyncStatusDto,
