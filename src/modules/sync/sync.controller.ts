@@ -15,8 +15,7 @@ import { EmployeeLookupDto } from './dto/employee-lookup.dto';
 import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { Roles } from '../roles/roles.decorator';
-import { Role } from 'src/generated/prisma/browser';
+
 import {
   ExportStoreSyncStatusDto,
   ExportStoreSyncStatusFormat,
