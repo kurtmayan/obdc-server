@@ -39,17 +39,17 @@ export const ROLE_PERMISSIONS: Record<string, Permissions> = {
   HR: {
     dashboard: { canRead: true, canExport: true },
     syncMonitor: { canReadSync: true, canExportStoreData: true },
-    userManagement: { canInvite: false, canRead: true },
+    userManagement: { canInvite: false, canRead: false },
     dtr: { canUploadDtr: true },
     storeManagement: {
       canCreate: false,
-      canRead: true,
+      canRead: false,
       canEdit: false,
       canDisable: false,
     },
     deviceManagement: {
       canCreate: false,
-      canRead: true,
+      canRead: false,
       canUpdate: false,
       canDelete: false,
     },
