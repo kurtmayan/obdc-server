@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { FindAllDeviceDto } from './dto/find-all.dto';
+import { Prisma } from 'src/generated/prisma/client';
 
 @Injectable()
 export class DeviceService {
@@ -128,12 +129,49 @@ export class DeviceService {
   }
 
   async remove(id: string) {
-    const findStore = await this.prismaService.devices.findFirst({
+    const findDevice = await this.prismaService.devices.findFirst({
       where: { id },
     });
-    if (!findStore) throw new NotFoundException('Store not found');
+    if (!findDevice) throw new NotFoundException('Device not found');
     const data = await this.prismaService.devices.delete({ where: { id } });
     if (!data) throw new UnprocessableEntityException();
     return data;
+  }
+
+  async deactivateDevice(id: string) {
+    try {
+      const device = await this.prismaService.devices.findFirst({
+        where: { id },
+        include: {
+          store: {
+            select: {
+              id: true,
+              status: true,
+            },
+          },
+        },
+      });
+
+      if (!device) throw new NotFoundException('Device not found');
+
+      if (device.store.status === 'active') {
+        throw new ConflictException(
+          'Cannot deactivate device while the store is active',
+        );
+      }
+
+      return await this.prismaService.devices.update({
+        where: { id: device.id },
+        data: { status: 'inactive' },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2025'
+      ) {
+        throw new NotFoundException('Device not found');
+      }
+      throw error;
+    }
   }
 }

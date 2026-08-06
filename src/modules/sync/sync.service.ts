@@ -23,7 +23,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import AdmZip from 'adm-zip';
-import { SyncStatus } from 'src/generated/prisma/enums';
+import { Status, SyncStatus } from 'src/generated/prisma/enums';
 import type {
   StoreSyncRecordGetPayload,
   StoreSyncRecordSelect,
@@ -110,6 +110,12 @@ export class SyncService {
         id: true,
         serialNumber: true,
         storesId: true,
+        store: {
+          select: {
+            name: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -128,6 +134,20 @@ export class SyncService {
     if (missingDevices.length > 0) {
       throw new BadRequestException(
         `Device not found: ${missingDevices.join(', ')}`,
+      );
+    }
+
+    const inactiveStoreNames = [
+      ...new Set(
+        devices
+          .filter((device) => device.store.status !== Status.active)
+          .map((device) => device.store.name),
+      ),
+    ];
+
+    if (inactiveStoreNames.length > 0) {
+      throw new BadRequestException(
+        `Inactive stores cannot sync: ${inactiveStoreNames.join(', ')}`,
       );
     }
 
