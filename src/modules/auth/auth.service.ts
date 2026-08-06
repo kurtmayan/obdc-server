@@ -181,8 +181,8 @@ export class AuthService {
     if (!checkUserExist) throw new UnauthorizedException('Invalid credentials');
 
     const isAccountLocked =
-      checkUserExist.loginFailedAttempts >= 5 ||
-      checkUserExist.otpFailedAttempts >= 5;
+      checkUserExist.loginFailedAttempts >= 3 ||
+      checkUserExist.otpFailedAttempts >= 3;
     if (isAccountLocked) {
       throw new UnauthorizedException({
         message:
