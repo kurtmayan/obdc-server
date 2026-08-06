@@ -5,9 +5,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
-  Attendance,
+  // Attendance,
+  AttendanceDto,
+  SyncRecordDto,
   CreateStoreSyncRecord,
-  SyncRecord,
+  // SyncRecord,
 } from './dto/create-store-sync-record.dto';
 import {
   eachDayOfInterval,
@@ -21,7 +23,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import AdmZip from 'adm-zip';
-import { SyncStatus } from 'src/generated/prisma/enums';
+import { Status, SyncStatus } from 'src/generated/prisma/enums';
 import type {
   StoreSyncRecordGetPayload,
   StoreSyncRecordSelect,
@@ -108,6 +110,12 @@ export class SyncService {
         id: true,
         serialNumber: true,
         storesId: true,
+        store: {
+          select: {
+            name: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -129,7 +137,21 @@ export class SyncService {
       );
     }
 
-    const recordsByStore = new Map<string, SyncRecord[]>();
+    const inactiveStoreNames = [
+      ...new Set(
+        devices
+          .filter((device) => device.store.status !== Status.active)
+          .map((device) => device.store.name),
+      ),
+    ];
+
+    if (inactiveStoreNames.length > 0) {
+      throw new BadRequestException(
+        `Inactive stores cannot sync: ${inactiveStoreNames.join(', ')}`,
+      );
+    }
+
+    const recordsByStore = new Map<string, SyncRecordDto[]>();
 
     for (const record of payload.sync_record) {
       const device = deviceMap.get(record.device_id);
@@ -208,7 +230,7 @@ export class SyncService {
     payload: CreateStoreSyncRecord,
   ): CreateStoreSyncRecord[] {
     const chunks: CreateStoreSyncRecord[] = [];
-    let currentRecords: SyncRecord[] = [];
+    let currentRecords: SyncRecordDto[] = [];
     let currentAttendanceCount = 0;
 
     const flushChunk = () => {
@@ -627,7 +649,7 @@ export class SyncService {
       throw new BadRequestException('No data found in Excel file');
     }
 
-    const syncRecords = new Map<string, SyncRecord>();
+    const syncRecords = new Map<string, SyncRecordDto>();
     let rowCount = 0;
 
     // Process rows directly without storing them
@@ -663,7 +685,7 @@ export class SyncService {
         syncRecords.set(deviceId, record);
       }
 
-      const attendanceRecord: Attendance = {
+      const attendanceRecord: AttendanceDto = {
         employee_name: employeeName,
         employee_id: employeeId,
         log_date: logDate,
