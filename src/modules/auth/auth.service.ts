@@ -15,6 +15,7 @@ import { ResetPasswordAuthDto } from './dto/reset-password.auth.dto';
 import crypto from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { JwtPayload } from 'jsonwebtoken';
+import { ROLE_PERMISSIONS } from 'src/config/permission';
 
 @Injectable()
 export class AuthService {
@@ -567,5 +568,9 @@ export class AuthService {
     const expirationDate = new Date(lastPasswordUpdate);
     expirationDate.setDate(expirationDate.getDate() + 90);
     return new Date() >= expirationDate;
+  }
+
+  async permission(payload: JwtPayload) {
+    return ROLE_PERMISSIONS[payload.role] ?? payload;
   }
 }

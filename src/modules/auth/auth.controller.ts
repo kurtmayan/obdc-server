@@ -51,4 +51,9 @@ export class AuthController {
   generatePasswordResetToken(@Param('id') id: string) {
     return this.authService.generatePasswordResetToken(id);
   }
+
+  @Get('/me/permission')
+  permission(@Req() req: Request & { user: JwtPayload }) {
+    return this.authService.permission(req.user);
+  }
 }
