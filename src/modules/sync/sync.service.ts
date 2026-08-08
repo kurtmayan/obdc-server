@@ -52,7 +52,9 @@ type StoreSyncStatusExportQuery = {
 type StoreSyncStatusAttempt = {
   syncDate: Date;
   status: SyncStatus;
-  totalRecords: number;
+  _count: {
+    attendanceRecord: number;
+  };
 };
 
 type StoreSyncStatusReportStatus = 'Pending' | 'Success' | 'Processing';
@@ -359,7 +361,11 @@ export class SyncService {
           select: {
             syncDate: true,
             status: true,
-            totalRecords: true,
+            _count: {
+              select: {
+                attendanceRecord: true,
+              },
+            },
           },
         },
       },
@@ -434,7 +440,7 @@ export class SyncService {
             : '',
           locationName: store.location,
           totalRecords: attempts.reduce(
-            (total, attempt) => total + attempt.totalRecords,
+            (total, attempt) => total + attempt._count.attendanceRecord,
             0,
           ),
           syncStatus: status,
