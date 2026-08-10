@@ -48,5 +48,7 @@ export class DeviceController {
   }
 
   @Patch('/deactivate/:id')
-  deactivateDevice(@Param('id') id: string) {}
+  deactivateDevice(@Param('id') id: string) {
+    return this.deviceService.deactivateDevice(id)
+  }
 }

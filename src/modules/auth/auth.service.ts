@@ -48,7 +48,9 @@ export class AuthService {
       await this.prismaService.users.update({
         where: { id: checkUserExist.id },
         data: {
-          loginFailedAttempts: checkUserExist.loginFailedAttempts + 1,
+          loginFailedAttempts: {
+            increment: 1
+          },
         },
       });
       throw new UnauthorizedException('Invalid credentials');

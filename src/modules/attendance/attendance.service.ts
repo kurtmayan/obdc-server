@@ -82,7 +82,7 @@ export class AttendanceService {
       this.prismaService.$queryRaw<StoreIdRow[]>(Prisma.sql`
         SELECT s."id"
         ${baseQuery}
-        ORDER BY s."createdAt" DESC
+        ORDER BY latest."syncDate" DESC NULLS LAST, s."createdAt" DESC
         OFFSET ${skip}
         LIMIT ${take}
       `),
