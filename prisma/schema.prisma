@@ -101,6 +101,8 @@ model StoreSyncRecord {
   storesId         String
   attendanceRecord AttendanceRecord[]
   chunks           StoreSyncRecordChunk[]
+
+  @@index([storesId, syncDate(sort: Desc)])
 }
 
 model StoreSyncRecordChunk {

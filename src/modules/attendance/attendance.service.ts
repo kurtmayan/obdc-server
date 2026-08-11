@@ -57,6 +57,7 @@ export class AttendanceService {
   }: FindGeneralRecordDto) {
     const take = pageSize;
     const skip = (page - 1) * take;
+    const hasLatestFilters = Boolean(status || startDate || endDate);
     const where = this.buildGeneralRecordWhere({
       q,
       division,
@@ -64,6 +65,11 @@ export class AttendanceService {
       status,
       startDate,
       endDate,
+    });
+    const storeWhere = this.buildStoreRecordWhere({
+      q,
+      division,
+      cluster,
     });
 
     const baseQuery = Prisma.sql`
@@ -77,8 +83,14 @@ export class AttendanceService {
       ) latest ON true
       ${where}
     `;
+    const countBaseQuery = hasLatestFilters
+      ? baseQuery
+      : Prisma.sql`
+        FROM "Stores" s
+        ${storeWhere}
+      `;
 
-    const [storeIdRows, countRows] = await this.prismaService.$transaction([
+    const [storeIdRows, countRows] = await Promise.all([
       this.prismaService.$queryRaw<StoreIdRow[]>(Prisma.sql`
         SELECT s."id"
         ${baseQuery}
@@ -88,7 +100,7 @@ export class AttendanceService {
       `),
       this.prismaService.$queryRaw<CountRow[]>(Prisma.sql`
         SELECT COUNT(*)::bigint AS count
-        ${baseQuery}
+        ${countBaseQuery}
       `),
     ]);
 
@@ -144,6 +156,27 @@ export class AttendanceService {
     FindGeneralRecordDto,
     'q' | 'division' | 'cluster' | 'status' | 'startDate' | 'endDate'
   >) {
+    return this.buildWhere([
+      ...this.buildStoreRecordConditions({ q, division, cluster }),
+      ...this.buildLatestRecordConditions({ status, startDate, endDate }),
+    ]);
+  }
+
+  private buildStoreRecordWhere({
+    q,
+    division,
+    cluster,
+  }: Pick<FindGeneralRecordDto, 'q' | 'division' | 'cluster'>) {
+    return this.buildWhere(
+      this.buildStoreRecordConditions({ q, division, cluster }),
+    );
+  }
+
+  private buildStoreRecordConditions({
+    q,
+    division,
+    cluster,
+  }: Pick<FindGeneralRecordDto, 'q' | 'division' | 'cluster'>) {
     const conditions: Prisma.Sql[] = [];
     const search = q?.trim();
 
@@ -166,6 +199,16 @@ export class AttendanceService {
       conditions.push(Prisma.sql`s."cluster" = ${cluster}::"Cluster"`);
     }
 
+    return conditions;
+  }
+
+  private buildLatestRecordConditions({
+    status,
+    startDate,
+    endDate,
+  }: Pick<FindGeneralRecordDto, 'status' | 'startDate' | 'endDate'>) {
+    const conditions: Prisma.Sql[] = [];
+
     if (status) {
       conditions.push(Prisma.sql`latest."status" = ${status}::"SyncStatus"`);
     }
@@ -182,6 +225,10 @@ export class AttendanceService {
       );
     }
 
+    return conditions;
+  }
+
+  private buildWhere(conditions: Prisma.Sql[]) {
     if (conditions.length === 0) {
       return Prisma.empty;
     }
