@@ -9,6 +9,38 @@ export class StatisticsService {
     return this.prismaService.stores.count();
   }
 
+  async getDashboardInfo({
+    startDate,
+    endDate,
+  }: {
+    startDate?: string;
+    endDate?: string;
+  }) {
+    const { start, end } = this.parseDateRange(startDate, endDate);
+
+    const [totalStores, totalSyncedStores, activeStores] = await Promise.all([
+      this.prismaService.stores.count(),
+      this.prismaService.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(DISTINCT "storesId") AS count
+        FROM "StoreSyncRecord"
+        WHERE "status" = 'SUCCESS'
+          AND "syncDate" >= ${start}
+          AND "syncDate" <= ${end}
+      `,
+      this.prismaService.stores.count({
+        where: {
+          status: 'active',
+        },
+      }),
+    ]);
+
+    return {
+      totalStores,
+      totalUnsyncedStores: Number(totalSyncedStores[0].count),
+      activeStores,
+    };
+  }
+
   async getTotalStoreSynced(dateRange: { start: Date; end: Date }) {
     const syncedStores = await this.prismaService.storeSyncRecord.findMany({
       where: {
