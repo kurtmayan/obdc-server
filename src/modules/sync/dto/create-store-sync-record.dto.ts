@@ -1,16 +1,41 @@
-export type Attendance = {
-  employee_name: string;
-  employee_id: string;
-  log_date: string;
-  punch: number;
-  id: string;
-};
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsInt,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
 
-export type SyncRecord = {
+export class AttendanceDto {
+  @IsString()
+  employee_name: string;
+
+  @IsString()
+  employee_id: string;
+
+  @IsString()
+  log_date: string;
+
+  @IsInt()
+  punch: number;
+
+  @IsString()
+  id: string;
+}
+
+export class SyncRecordDto {
+  @IsString()
   device_id: string;
-  attendance_record: Attendance[];
-};
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AttendanceDto)
+  attendance_record: AttendanceDto[];
+}
 
 export class CreateStoreSyncRecord {
-  sync_record: SyncRecord[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SyncRecordDto)
+  sync_record: SyncRecordDto[];
 }

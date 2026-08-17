@@ -6,35 +6,37 @@ import {
   Patch,
   Param,
   Delete,
+  Query,
 } from '@nestjs/common';
 import { DeviceService } from './device.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { Public } from '../auth/auth.decorator';
+import { FindAllDeviceDto } from './dto/find-all.dto';
 
 @Controller('device')
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
 
-  @Public()
+  // @Public()
   @Post()
   create(@Body() createDeviceDto: CreateDeviceDto) {
     return this.deviceService.create(createDeviceDto);
   }
 
-  @Public()
+  // @Public()
   @Get()
-  findAll() {
-    return this.deviceService.findAll();
+  findAll(@Query() query: FindAllDeviceDto) {
+    return this.deviceService.findAll(query);
   }
 
-  @Public()
+  // @Public()
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.deviceService.findOne(id);
   }
 
-  @Public()
+  // @Public()
   @Patch(':id')
   update(@Param('id') id: string, @Body() updateDeviceDto: UpdateDeviceDto) {
     return this.deviceService.update(id, updateDeviceDto);
@@ -43,5 +45,10 @@ export class DeviceController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.deviceService.remove(id);
+  }
+
+  @Patch('/deactivate/:id')
+  deactivateDevice(@Param('id') id: string) {
+    return this.deviceService.deactivateDevice(id)
   }
 }

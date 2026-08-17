@@ -10,14 +10,7 @@ export class StatisticsController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
   ) {
-    const dateRange = this.statisticsService.parseDateRange(startDate, endDate);
-    return {
-      totalStores: await this.statisticsService.getTotalStores(),
-      totalStoreSynced:
-        await this.statisticsService.getTotalStoreSynced(dateRange),
-      totalStoreUnsynced:
-        await this.statisticsService.getTotalStoreUnsynced(dateRange),
-    };
+    return this.statisticsService.getDashboardInfo({ startDate, endDate });
   }
 
   @Get('datasets')

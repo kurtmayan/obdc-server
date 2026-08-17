@@ -7,14 +7,14 @@ import express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  // Increase the body size limit
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
   const config = new DocumentBuilder().build();
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, documentFactory);
   app.enableCors();
-  app.useGlobalPipes(new ValidationPipe());
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 bootstrap();

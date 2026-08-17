@@ -22,7 +22,7 @@ import {
 } from 'src/types/sqs-message';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
-import { SyncStatus } from 'src/generated/prisma/enums';
+import { Status, SyncStatus } from 'src/generated/prisma/enums';
 
 type QueuedSyncRecord = {
   id: string;
@@ -242,6 +242,12 @@ export class SqsProcessor
           select: {
             id: true,
             storesId: true,
+            store: {
+              select: {
+                name: true,
+                status: true,
+              },
+            },
           },
         },
       },
@@ -272,6 +278,12 @@ export class SqsProcessor
 
       if (!this.isCreateStoreSyncRecord(chunk.payload)) {
         throw new Error(`Invalid sync chunk payload: ${chunk.id}`);
+      }
+
+      if (chunk.storeSyncRecord.store.status !== Status.active) {
+        throw new Error(
+          `Inactive store cannot sync: ${chunk.storeSyncRecord.store.name}`,
+        );
       }
 
       await this.prisma.storeSyncRecord.update({
@@ -353,6 +365,12 @@ export class SqsProcessor
       select: {
         serialNumber: true,
         storesId: true,
+        store: {
+          select: {
+            name: true,
+            status: true,
+          },
+        },
       },
     });
 
@@ -366,6 +384,20 @@ export class SqsProcessor
 
     if (missingDeviceIds.length > 0) {
       throw new Error(`Devices not found: ${missingDeviceIds.join(', ')}`);
+    }
+
+    const inactiveStoreNames = [
+      ...new Set(
+        devices
+          .filter((device) => device.store.status !== Status.active)
+          .map((device) => device.store.name),
+      ),
+    ];
+
+    if (inactiveStoreNames.length > 0) {
+      throw new Error(
+        `Inactive stores cannot sync: ${inactiveStoreNames.join(', ')}`,
+      );
     }
 
     const storeToSyncMap = new Map(
