@@ -34,12 +34,18 @@ type SyncInsertResult = {
   insertedCountBySyncRecord: Map<string, number>;
 };
 
+type LockedStoreSyncRecord = {
+  id: string;
+  status: SyncStatus;
+};
+
 @Injectable()
 export class SqsProcessor
   implements OnApplicationBootstrap, OnApplicationShutdown
 {
   private readonly logger = new Logger(SqsProcessor.name);
   private readonly queueUrl: string;
+  private readonly visibilityTimeoutSeconds: number;
 
   private running = false;
 
@@ -50,6 +56,7 @@ export class SqsProcessor
     private readonly prisma: PrismaService,
   ) {
     this.queueUrl = this.configService.getOrThrow<string>('AWS_SQS_QUEUE_URL');
+    this.visibilityTimeoutSeconds = this.getVisibilityTimeoutSeconds();
   }
 
   onApplicationBootstrap(): void {
@@ -71,7 +78,7 @@ export class SqsProcessor
             QueueUrl: this.queueUrl,
             MaxNumberOfMessages: 10,
             WaitTimeSeconds: 20,
-            VisibilityTimeout: 60,
+            VisibilityTimeout: this.visibilityTimeoutSeconds,
           }),
         );
 
@@ -154,6 +161,16 @@ export class SqsProcessor
     return new Promise((resolve) => {
       setTimeout(resolve, milliseconds);
     });
+  }
+
+  private getVisibilityTimeoutSeconds(): number {
+    const configuredTimeout = Number(
+      this.configService.get<string>('AWS_SQS_VISIBILITY_TIMEOUT_SECONDS'),
+    );
+
+    return Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : 300;
   }
 
   private async processSyncRecords(messagePayload: SyncMessage): Promise<void> {
@@ -263,19 +280,58 @@ export class SqsProcessor
       return;
     }
 
-    try {
-      await this.prisma.storeSyncRecordChunk.update({
+    if (chunk.status === SyncStatus.FAILED) {
+      this.logger.log(`Sync chunk ${chunk.id} already failed.`);
+      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
+      return;
+    }
+
+    if (chunk.status === SyncStatus.PROCESSING) {
+      this.logger.log(`Sync chunk ${chunk.id} is already being processed.`);
+      return;
+    }
+
+    const claimResult = await this.prisma.storeSyncRecordChunk.updateMany({
+      where: {
+        id: chunk.id,
+        status: SyncStatus.PENDING,
+      },
+      data: {
+        status: SyncStatus.PROCESSING,
+        startedAt: new Date(),
+        completedAt: null,
+        errorMessage: null,
+      },
+    });
+
+    if (claimResult.count === 0) {
+      const currentChunk = await this.prisma.storeSyncRecordChunk.findUnique({
         where: {
           id: chunk.id,
         },
-        data: {
-          status: SyncStatus.PROCESSING,
-          startedAt: new Date(),
-          completedAt: null,
-          errorMessage: null,
+        select: {
+          status: true,
+          storeSyncRecordID: true,
         },
       });
 
+      if (!currentChunk) {
+        throw new Error(`Sync chunk not found: ${chunk.id}`);
+      }
+
+      if (
+        currentChunk.status === SyncStatus.SUCCESS ||
+        currentChunk.status === SyncStatus.FAILED
+      ) {
+        await this.finalizeStoreSyncRecord(currentChunk.storeSyncRecordID);
+        return;
+      }
+
+      this.logger.log(`Sync chunk ${chunk.id} was claimed by another worker.`);
+      return;
+    }
+
+    try {
       if (!this.isCreateStoreSyncRecord(chunk.payload)) {
         throw new Error(`Invalid sync chunk payload: ${chunk.id}`);
       }
@@ -286,9 +342,12 @@ export class SqsProcessor
         );
       }
 
-      await this.prisma.storeSyncRecord.update({
+      await this.prisma.storeSyncRecord.updateMany({
         where: {
           id: chunk.storeSyncRecordID,
+          status: {
+            notIn: [SyncStatus.SUCCESS, SyncStatus.FAILED],
+          },
         },
         data: {
           status: SyncStatus.PROCESSING,
@@ -314,21 +373,16 @@ export class SqsProcessor
           failedRecords: 0,
         },
       });
-
-      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
-
-      this.logger.log(
-        `Sync chunk ${chunk.id} completed. Inserted ${result.totalInserted} attendance records.`,
-      );
     } catch (error) {
       const errorMessage =
         error instanceof Error
           ? error.message
           : 'Unknown error occurred while syncing chunk';
 
-      await this.prisma.storeSyncRecordChunk.update({
+      await this.prisma.storeSyncRecordChunk.updateMany({
         where: {
           id: chunk.id,
+          status: SyncStatus.PROCESSING,
         },
         data: {
           status: SyncStatus.FAILED,
@@ -342,6 +396,10 @@ export class SqsProcessor
 
       throw error;
     }
+
+    await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
+
+    this.logger.log(`Sync chunk ${chunk.id} completed.`);
   }
 
   private async insertSyncPayload(
@@ -533,78 +591,100 @@ export class SqsProcessor
   private async finalizeStoreSyncRecord(
     storeSyncRecordID: string,
   ): Promise<void> {
-    const [failedChunk, incompleteChunks, aggregate] = await Promise.all([
-      this.prisma.storeSyncRecordChunk.findFirst({
-        where: {
-          storeSyncRecordID,
-          status: SyncStatus.FAILED,
-        },
-        select: {
-          errorMessage: true,
-        },
-      }),
-      this.prisma.storeSyncRecordChunk.count({
-        where: {
-          storeSyncRecordID,
-          status: {
-            in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
-          },
-        },
-      }),
-      this.prisma.storeSyncRecordChunk.aggregate({
-        where: {
-          storeSyncRecordID,
-        },
-        _sum: {
-          insertedRecords: true,
-          failedRecords: true,
-        },
-      }),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      const lockedRecords = await tx.$queryRaw<LockedStoreSyncRecord[]>`
+        SELECT id, status
+        FROM "StoreSyncRecord"
+        WHERE id = ${storeSyncRecordID}
+        FOR UPDATE
+      `;
 
-    if (failedChunk) {
-      await this.prisma.storeSyncRecord.update({
+      const lockedRecord = lockedRecords[0];
+
+      if (!lockedRecord) {
+        throw new Error(`Store sync record not found: ${storeSyncRecordID}`);
+      }
+
+      const [failedChunk, incompleteChunks, aggregate] = await Promise.all([
+        tx.storeSyncRecordChunk.findFirst({
+          where: {
+            storeSyncRecordID,
+            status: SyncStatus.FAILED,
+          },
+          select: {
+            errorMessage: true,
+          },
+        }),
+        tx.storeSyncRecordChunk.count({
+          where: {
+            storeSyncRecordID,
+            status: {
+              in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
+            },
+          },
+        }),
+        tx.storeSyncRecordChunk.aggregate({
+          where: {
+            storeSyncRecordID,
+          },
+          _sum: {
+            insertedRecords: true,
+            failedRecords: true,
+          },
+        }),
+      ]);
+
+      if (failedChunk) {
+        await tx.storeSyncRecord.update({
+          where: {
+            id: storeSyncRecordID,
+          },
+          data: {
+            status: SyncStatus.FAILED,
+            completedAt: new Date(),
+            insertedRecords: aggregate._sum.insertedRecords ?? 0,
+            failedRecords: aggregate._sum.failedRecords ?? 0,
+            errorMessage: failedChunk.errorMessage,
+          },
+        });
+        return;
+      }
+
+      if (incompleteChunks > 0) {
+        if (
+          lockedRecord.status === SyncStatus.SUCCESS ||
+          lockedRecord.status === SyncStatus.FAILED
+        ) {
+          return;
+        }
+
+        await tx.storeSyncRecord.update({
+          where: {
+            id: storeSyncRecordID,
+          },
+          data: {
+            status: SyncStatus.PROCESSING,
+            insertedRecords: aggregate._sum.insertedRecords ?? 0,
+            failedRecords: aggregate._sum.failedRecords ?? 0,
+            completedAt: null,
+            errorMessage: null,
+          },
+        });
+        return;
+      }
+
+      await tx.storeSyncRecord.update({
         where: {
           id: storeSyncRecordID,
         },
         data: {
-          status: SyncStatus.FAILED,
+          status: SyncStatus.SUCCESS,
           completedAt: new Date(),
           insertedRecords: aggregate._sum.insertedRecords ?? 0,
           failedRecords: aggregate._sum.failedRecords ?? 0,
-          errorMessage: failedChunk.errorMessage,
-        },
-      });
-      return;
-    }
-
-    if (incompleteChunks > 0) {
-      await this.prisma.storeSyncRecord.update({
-        where: {
-          id: storeSyncRecordID,
-        },
-        data: {
-          status: SyncStatus.PROCESSING,
-          insertedRecords: aggregate._sum.insertedRecords ?? 0,
-          failedRecords: aggregate._sum.failedRecords ?? 0,
-          completedAt: null,
           errorMessage: null,
         },
       });
-      return;
-    }
-
-    await this.prisma.storeSyncRecord.update({
-      where: {
-        id: storeSyncRecordID,
-      },
-      data: {
-        status: SyncStatus.SUCCESS,
-        completedAt: new Date(),
-        insertedRecords: aggregate._sum.insertedRecords ?? 0,
-        failedRecords: aggregate._sum.failedRecords ?? 0,
-        errorMessage: null,
-      },
     });
   }
 
