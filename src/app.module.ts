@@ -22,6 +22,7 @@ import { TestingModule } from './modules/testing/testing.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditTrailModule } from './modules/audit-trail/audit-trail.module';
 import { AuditTrailInterceptor } from './modules/audit-trail/audit-trail.interceptor';
+import { MyhrModule } from './modules/myhr/myhr.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AuditTrailInterceptor } from './modules/audit-trail/audit-trail.interce
     SqsQueueModule,
     TestingModule,
     AuditTrailModule,
+    MyhrModule,
   ],
   controllers: [AppController, StoreController],
   providers: [

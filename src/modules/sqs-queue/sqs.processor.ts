@@ -17,12 +17,14 @@ import {
 import { SQS_CLIENT } from './sqs.constants';
 import {
   AppQueueMessage,
+  AppQueueType,
   SyncChunkMessage,
   SyncMessage,
 } from 'src/types/sqs-message';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
+import { CreateMyHrRecord } from '../myhr/dto/create-myhr.dto';
 
 type QueuedSyncRecord = {
   id: string;
@@ -136,14 +138,19 @@ export class SqsProcessor
   }
 
   private async handleMessage(message: AppQueueMessage): Promise<void> {
+    const type = message.type;
+
     switch (message.type) {
       case 'SYNC_RECORDS':
         await this.processSyncRecords(message.payload);
         return;
 
       case 'SYNC_RECORD_CHUNK':
-        await this.processSyncRecordChunk(message.payload);
+        await this.processSyncRecordChunk(message.payload, type);
         return;
+
+      case 'SYNC_MY_HR_CHUNK':
+        await this.processSyncRecordChunk(message.payload, type);
 
       default: {
         const unsupportedMessage = message as {
@@ -197,7 +204,11 @@ export class SqsProcessor
         },
       });
 
-      const result = await this.insertSyncPayload(payload, syncRecords);
+      if (!this.isCreateStoreSyncRecord(payload)) {
+        throw new Error('Invalid sync payload');
+      }
+
+      const result = await this.insertSyncPayload(payload as CreateStoreSyncRecord, syncRecords);
 
       await this.prisma.$transaction(
         syncRecords.map((syncRecord) =>
@@ -244,6 +255,7 @@ export class SqsProcessor
 
   private async processSyncRecordChunk(
     messagePayload: SyncChunkMessage,
+    type: AppQueueType
   ): Promise<void> {
     const chunk = await this.prisma.storeSyncRecordChunk.findUnique({
       where: {
@@ -357,9 +369,13 @@ export class SqsProcessor
         },
       });
 
-      const result = await this.insertSyncPayload(chunk.payload, [
-        chunk.storeSyncRecord,
-      ]);
+      const result = type === 'SYNC_MY_HR_CHUNK' ? 
+        await this.insertMyHrPayload(chunk.payload as CreateStoreSyncRecord, [
+          chunk.storeSyncRecord,
+        ]) : 
+        await this.insertSyncPayload(chunk.payload as CreateStoreSyncRecord, [
+          chunk.storeSyncRecord,
+        ]);
 
       await this.prisma.storeSyncRecordChunk.update({
         where: {
@@ -400,6 +416,19 @@ export class SqsProcessor
     await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
 
     this.logger.log(`Sync chunk ${chunk.id} completed.`);
+  }
+
+  private async insertMyHrPayload(
+    payload: CreateStoreSyncRecord,
+    syncRecords: QueuedSyncRecord[],
+  ): Promise<SyncInsertResult> {
+    let totalInserted = 0;
+    const insertedCountBySyncRecord = new Map<string, number>();
+
+    return {
+      totalInserted,
+      insertedCountBySyncRecord,
+    };
   }
 
   private async insertSyncPayload(
@@ -748,7 +777,7 @@ export class SqsProcessor
 
   private isCreateStoreSyncRecord(
     value: unknown,
-  ): value is CreateStoreSyncRecord {
+  ): value is CreateStoreSyncRecord | CreateMyHrRecord {
     if (!value || typeof value !== 'object') {
       return false;
     }
@@ -768,9 +797,28 @@ export class SqsProcessor
 
       if (
         typeof item.device_id !== 'string' ||
-        !Array.isArray(item.attendance_record)
+        !Array.isArray(item.attendance_record) ||
+        !Array.isArray(item.myhr_record)
       ) {
         return false;
+      }
+
+      if (item.myhr_record) {
+        return item.myhr_record.every((myhr) => {
+          if (!myhr || typeof myhr !== 'object') {
+            return false;
+          }
+
+          const log = myhr as Record<string, unknown>;
+
+          return (
+            typeof log.empid === 'string' &&
+            typeof log.logdt === 'string' &&
+            typeof log.logtm === 'string' &&
+            typeof log.logstats === 'string' &&
+            typeof log.location === 'string'
+          );
+        });
       }
 
       return item.attendance_record.every((attendance) => {

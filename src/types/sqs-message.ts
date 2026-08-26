@@ -1,3 +1,4 @@
+import { CreateMyHrRecord } from 'src/modules/myhr/dto/create-myhr.dto';
 import { CreateStoreSyncRecord } from 'src/modules/sync/dto/create-store-sync-record.dto';
 
 export interface QueueMessage<TType extends string, TPayload> {
@@ -12,7 +13,7 @@ export interface TestingMessage {
 }
 
 export interface SyncMessage {
-  payload: CreateStoreSyncRecord;
+  payload: CreateStoreSyncRecord | CreateMyHrRecord;
   syncRecords: {
     id: string;
     storesId: string;
@@ -24,5 +25,12 @@ export interface SyncChunkMessage {
 }
 
 export type AppQueueMessage =
+  | QueueMessage<'SYNC_MY_HR_CHUNK', SyncChunkMessage>
   | QueueMessage<'SYNC_RECORDS', SyncMessage>
   | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>;
+
+
+export type AppQueueType = 
+  | 'SYNC_MY_HR_CHUNK'
+  | 'SYNC_RECORDS'
+  | 'SYNC_RECORD_CHUNK';
