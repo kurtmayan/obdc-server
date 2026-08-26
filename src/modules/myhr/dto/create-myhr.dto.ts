@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsArray, IsString, ValidateNested } from "class-validator";
+import { IsArray, IsInt, IsString, ValidateNested } from "class-validator";
 
 class BiometricDto {
     @IsString()
@@ -11,8 +11,8 @@ class BiometricDto {
     @IsString()
     "logtm": string;
 
-    @IsString()
-    "logstats": string;
+    @IsInt()
+    "logstats": number;
 
     @IsString()
     "location": string;

@@ -9,7 +9,7 @@ export class MyHrController {
 
   @Public()
   @Post()
-  createSyncRecord(@Body() data: CreateMyHrRecord) {
+  createMyHrRecord(@Body() data: CreateMyHrRecord) {
     return this.service.storeMyHrRecords(data);
   }
 }
