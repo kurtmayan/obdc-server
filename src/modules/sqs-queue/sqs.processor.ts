@@ -783,51 +783,51 @@ export class SqsProcessor
   }
 
   private isCreateMyHrRecord(
-  value: unknown,
-): value is CreateMyHrRecord {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const syncPayload = value as Record<string, unknown>;
-
-  if (!Array.isArray(syncPayload.sync_record)) {
-    return false;
-  }
-
-  return syncPayload.sync_record.every((record) => {
-    if (!record || typeof record !== 'object') {
+    value: unknown,
+  ): value is CreateMyHrRecord {
+    if (!value || typeof value !== 'object') {
       return false;
     }
 
-    const item = record as Record<string, unknown>;
+    const syncPayload = value as Record<string, unknown>;
 
-    // Validate MyHR record
-    if (
-      typeof item.device_id !== 'string' ||
-      !Array.isArray(item.biometric_record)
-    ) {
+    if (!Array.isArray(syncPayload.sync_record)) {
       return false;
     }
 
-    // Validate biometric records
-    return item.biometric_record.every((biometric) => {
-      if (!biometric || typeof biometric !== 'object') {
+    return syncPayload.sync_record.every((record) => {
+      if (!record || typeof record !== 'object') {
         return false;
       }
 
-      const log = biometric as Record<string, unknown>;
+      const item = record as Record<string, unknown>;
 
-      return (
-        typeof log.empid === 'string' &&
-        typeof log.logdt === 'string' &&
-        typeof log.logtm === 'string' &&
-        typeof log.logstats === 'string' &&
-        typeof log.location === 'string'
-      );
+      // Validate MyHR record
+      if (
+        typeof item.device_id !== 'string' ||
+        !Array.isArray(item.biometric_record)
+      ) {
+        return false;
+      }
+
+      // Validate biometric records
+      return item.biometric_record.every((biometric) => {
+        if (!biometric || typeof biometric !== 'object') {
+          return false;
+        }
+
+        const log = biometric as Record<string, unknown>;
+
+        return (
+          typeof log.empid === 'string' &&
+          typeof log.logdt === 'string' &&
+          typeof log.logtm === 'string' &&
+          typeof log.logstats === 'string' &&
+          typeof log.location === 'string'
+        );
+      });
     });
-  });
-}
+  }
 
   private isCreateStoreSyncRecord(
     value: unknown,
