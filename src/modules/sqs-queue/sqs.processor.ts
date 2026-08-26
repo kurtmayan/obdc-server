@@ -139,7 +139,7 @@ export class SqsProcessor
 
   private async handleMessage(message: AppQueueMessage): Promise<void> {
     const type = message.type;
-
+    console.log(`Handling message of type: ${type}`);
     switch (message.type) {
       case 'SYNC_RECORDS':
         await this.processSyncRecords(message.payload);
@@ -822,7 +822,7 @@ export class SqsProcessor
           typeof log.empid === 'string' &&
           typeof log.logdt === 'string' &&
           typeof log.logtm === 'string' &&
-          typeof log.logstats === 'string' &&
+          typeof log.logstats === 'number' &&
           typeof log.location === 'string'
         );
       });
