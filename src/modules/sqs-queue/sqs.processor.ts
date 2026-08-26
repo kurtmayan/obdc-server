@@ -151,7 +151,7 @@ export class SqsProcessor
 
       case 'SYNC_MY_HR_CHUNK':
         await this.processSyncRecordChunk(message.payload, type);
-
+        return;
       default: {
         const unsupportedMessage = message as {
           type?: unknown;
@@ -344,8 +344,14 @@ export class SqsProcessor
     }
 
     try {
-      if (!this.isCreateStoreSyncRecord(chunk.payload)) {
-        throw new Error(`Invalid sync chunk payload: ${chunk.id}`);
+      if (type === 'SYNC_MY_HR_CHUNK') {
+        if (!this.isCreateMyHrRecord(chunk.payload)) {
+          throw new Error(`Invalid MyHR sync chunk payload: ${chunk.id}`);
+        }
+      } else {
+        if (!this.isCreateStoreSyncRecord(chunk.payload)) {
+          throw new Error(`Invalid store sync chunk payload: ${chunk.id}`);
+        }
       }
 
       if (chunk.storeSyncRecord.store.status !== Status.active) {
@@ -370,7 +376,7 @@ export class SqsProcessor
       });
 
       const result = type === 'SYNC_MY_HR_CHUNK' ? 
-        await this.insertMyHrPayload(chunk.payload as CreateStoreSyncRecord, [
+        await this.insertMyHrPayload(chunk.payload as CreateMyHrRecord, [
           chunk.storeSyncRecord,
         ]) : 
         await this.insertSyncPayload(chunk.payload as CreateStoreSyncRecord, [
@@ -419,7 +425,7 @@ export class SqsProcessor
   }
 
   private async insertMyHrPayload(
-    payload: CreateStoreSyncRecord,
+    payload: CreateMyHrRecord,
     syncRecords: QueuedSyncRecord[],
   ): Promise<SyncInsertResult> {
     let totalInserted = 0;
@@ -732,7 +738,8 @@ export class SqsProcessor
       return false;
     }
 
-    if (message.type === 'SYNC_RECORD_CHUNK') {
+    if (message.type === 'SYNC_RECORD_CHUNK' || message.type === 'SYNC_MY_HR_CHUNK'
+    ) {
       const chunkPayload = message.payload as Record<string, unknown>;
 
       return typeof chunkPayload.chunkId === 'string';
@@ -752,7 +759,7 @@ export class SqsProcessor
       return false;
     }
 
-    if (!this.isCreateStoreSyncRecord(messagePayload.payload)) {
+    if (!this.isCreateStoreSyncRecord(messagePayload.payload) && !this.isCreateMyHrRecord(messagePayload.payload)) {
       return false;
     }
 
@@ -772,12 +779,59 @@ export class SqsProcessor
       return false;
     }
 
-    return validSyncRecords && this.isCreateStoreSyncRecord(syncPayload);
+    return validSyncRecords && (this.isCreateStoreSyncRecord(syncPayload) || this.isCreateMyHrRecord(syncPayload));
   }
+
+  private isCreateMyHrRecord(
+  value: unknown,
+): value is CreateMyHrRecord {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const syncPayload = value as Record<string, unknown>;
+
+  if (!Array.isArray(syncPayload.sync_record)) {
+    return false;
+  }
+
+  return syncPayload.sync_record.every((record) => {
+    if (!record || typeof record !== 'object') {
+      return false;
+    }
+
+    const item = record as Record<string, unknown>;
+
+    // Validate MyHR record
+    if (
+      typeof item.device_id !== 'string' ||
+      !Array.isArray(item.biometric_record)
+    ) {
+      return false;
+    }
+
+    // Validate biometric records
+    return item.biometric_record.every((biometric) => {
+      if (!biometric || typeof biometric !== 'object') {
+        return false;
+      }
+
+      const log = biometric as Record<string, unknown>;
+
+      return (
+        typeof log.empid === 'string' &&
+        typeof log.logdt === 'string' &&
+        typeof log.logtm === 'string' &&
+        typeof log.logstats === 'string' &&
+        typeof log.location === 'string'
+      );
+    });
+  });
+}
 
   private isCreateStoreSyncRecord(
     value: unknown,
-  ): value is CreateStoreSyncRecord | CreateMyHrRecord {
+  ): value is CreateStoreSyncRecord {
     if (!value || typeof value !== 'object') {
       return false;
     }
@@ -797,28 +851,9 @@ export class SqsProcessor
 
       if (
         typeof item.device_id !== 'string' ||
-        !Array.isArray(item.attendance_record) ||
-        !Array.isArray(item.myhr_record)
+        !Array.isArray(item.attendance_record)
       ) {
         return false;
-      }
-
-      if (item.myhr_record) {
-        return item.myhr_record.every((myhr) => {
-          if (!myhr || typeof myhr !== 'object') {
-            return false;
-          }
-
-          const log = myhr as Record<string, unknown>;
-
-          return (
-            typeof log.empid === 'string' &&
-            typeof log.logdt === 'string' &&
-            typeof log.logtm === 'string' &&
-            typeof log.logstats === 'string' &&
-            typeof log.location === 'string'
-          );
-        });
       }
 
       return item.attendance_record.every((attendance) => {
