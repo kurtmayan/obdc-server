@@ -8,7 +8,6 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
-import { Public } from '../auth/auth.decorator';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Express } from 'express';
 import { FindGeneralRecordDto } from './dto/find-general-record.dto';
