@@ -428,13 +428,75 @@ export class SqsProcessor
     payload: CreateMyHrRecord,
     syncRecords: QueuedSyncRecord[],
   ): Promise<SyncInsertResult> {
-    let totalInserted = 0;
-    const insertedCountBySyncRecord = new Map<string, number>();
-    console.log('Inserting MyHR payload:', payload);
-    return {
-      totalInserted,
-      insertedCountBySyncRecord,
-    };
+    // Combine all biometric records into ONE flat array
+    const biometricRecords = payload.sync_record.flatMap(
+      (record) => record.biometric_record,
+    );
+
+    try {
+      const response = await fetch(
+        this.configService.getOrThrow<string>('MYHR_API_URL'),
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(biometricRecords),
+        },
+      );
+
+      const responseBody = await response.text();
+
+      console.log('MyHR status:', response.status);
+      console.log('MyHR response:', responseBody);
+
+      if (!response.ok) {
+        throw new Error(
+          `MyHR endpoint failed: ${response.status} ${response.statusText} - ${responseBody}`,
+        );
+      }
+
+      let result: unknown;
+
+      try {
+        result = responseBody
+          ? JSON.parse(responseBody)
+          : null;
+      } catch {
+        result = responseBody;
+      }
+
+      console.log('MyHR endpoint response:', result);
+
+      const totalInserted = biometricRecords.length;
+
+      const insertedCountBySyncRecord = new Map<string, number>();
+
+      for (const syncRecord of syncRecords) {
+        insertedCountBySyncRecord.set(
+          syncRecord.id,
+          totalInserted,
+        );
+      }
+
+      return {
+        totalInserted,
+        insertedCountBySyncRecord,
+      };
+    } catch (error) {
+      console.error('Failed to send MyHR payload:', {
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+        url: this.configService.getOrThrow<string>('MYHR_API_URL'),
+      });
+
+      // Important:
+      // Re-throw so processSyncRecordChunk()
+      // marks the chunk as FAILED.
+      throw error;
+    }
   }
 
   private async insertSyncPayload(
