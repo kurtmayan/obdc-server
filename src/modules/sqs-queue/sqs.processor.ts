@@ -430,7 +430,7 @@ export class SqsProcessor
   ): Promise<SyncInsertResult> {
     let totalInserted = 0;
     const insertedCountBySyncRecord = new Map<string, number>();
-
+    console.log('Inserting MyHR payload:', payload);
     return {
       totalInserted,
       insertedCountBySyncRecord,
