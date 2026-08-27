@@ -1,7 +1,7 @@
 import { Type } from "class-transformer";
 import { IsArray, IsInt, IsString, ValidateNested } from "class-validator";
 
-class BiometricDto {
+export class BiometricDto {
     @IsString()
     "empid": string;
 

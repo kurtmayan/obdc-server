@@ -3,9 +3,10 @@ import { SyncService } from './sync.service';
 import { SyncController } from './sync.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueModule } from '../sqs-queue/sqs-queue.module';
+import { FileSecurityModule } from '../file-security/file-security.module';
 
 @Module({
-  imports: [SqsQueueModule],
+  imports: [SqsQueueModule, FileSecurityModule],
   providers: [SyncService, PrismaService],
   controllers: [SyncController],
 })

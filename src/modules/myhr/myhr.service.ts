@@ -1,10 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { CreateMyHrRecord, MyHrRecordDto } from './dto/create-myhr.dto';
+import { BiometricDto, CreateMyHrRecord, MyHrRecordDto } from './dto/create-myhr.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
 import { Prisma } from 'src/generated/prisma/client';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 import { StoreSyncRecordGetPayload, StoreSyncRecordSelect } from 'src/generated/prisma/models';
+import * as ExcelJS from 'exceljs';
+import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
+import { getCellText } from 'src/lib/excel';
+import { FileSecurityService } from '../file-security/file-security.service';
 
 const storeSyncRecordSelect = {
   id: true,
@@ -23,6 +27,7 @@ export class MyHrService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sqsQueueService: SqsQueueService,
+    private readonly fileSecurity: FileSecurityService
   ) {}
 
   async storeMyHrRecords(payload: CreateMyHrRecord) {
@@ -227,5 +232,115 @@ export class MyHrService {
       (count, record) => count + record.biometric_record.length,
       0,
     );
+  }
+
+  async excelSyncMyHrRecord(file: Express.Multer.File) {
+    const verifiedExcelBuffer = this.fileSecurity.extractAndVerifySignedExcel(file);
+
+    const biometricRecord = await this.parseExcelAndSyncMyHr(verifiedExcelBuffer);
+
+    return this.storeMyHrRecords(biometricRecord);
+  }
+
+  async parseExcelAndSyncMyHr(
+    buffer: Buffer,
+  ): Promise<CreateMyHrRecord> {
+    const workbook = new ExcelJS.Workbook();
+
+    const excelBuffer = new ArrayBuffer(buffer.byteLength);
+    new Uint8Array(excelBuffer).set(buffer);
+
+    await workbook.xlsx.load(excelBuffer);
+
+    const worksheet = workbook.worksheets[0];
+
+    if (!worksheet || worksheet.rowCount < 2) {
+      throw new BadRequestException('No data found in Excel file');
+    }
+
+    const syncRecords = new Map<string, MyHrRecordDto>();
+    let rowCount = 0;
+
+    worksheet.eachRow((row, rowNumber) => {
+      // Skip header
+      if (rowNumber === 1) {
+        return;
+      }
+      rowCount++;
+
+      const deviceIdRaw = getCellText(row.getCell(2).value);
+      const empid = getCellText(row.getCell(4).value);
+      const logdt = getCellText(row.getCell(5).value);
+      const logtm = getCellText(row.getCell(6).value);
+      const logstats = this.getLogStatsValue(
+        row.getCell(7).value,
+        rowNumber,
+      );
+      const location = getCellText(row.getCell(8).value);
+
+      // Validate required fields
+      if (
+        !deviceIdRaw ||
+        !empid ||
+        !logdt ||
+        !logtm ||
+        !location
+      ) {
+        throw new BadRequestException(
+          `Row ${rowNumber}: Missing required fields`,
+        );
+      }
+
+      // Extract first device serial number if comma-separated
+      const device_id = deviceIdRaw.split(',')[0].trim();
+
+      let record = syncRecords.get(device_id);
+
+      if (!record) {
+        record = {
+          device_id,
+          biometric_record: [],
+        };
+
+        syncRecords.set(device_id, record);
+      }
+
+      const biometricRecord: BiometricDto = {
+        empid,
+        logdt,
+        logtm,
+        logstats,
+        location,
+      };
+
+      record.biometric_record.push(biometricRecord);
+    });
+
+    if (rowCount === 0) {
+      throw new BadRequestException(
+        'No data rows found in Excel file',
+      );
+    }
+
+    return {
+      sync_record: Array.from(syncRecords.values()),
+    };
+  }
+
+  private getLogStatsValue(
+    value: ExcelJS.CellValue,
+    rowNumber: number,
+  ): number {
+    const text = getCellText(value);
+
+    const logstats = Number(text);
+
+    if (!Number.isInteger(logstats)) {
+      throw new BadRequestException(
+        `Row ${rowNumber}: Invalid logstats value`,
+      );
+    }
+
+    return logstats;
   }
 }
