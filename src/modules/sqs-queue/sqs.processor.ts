@@ -150,7 +150,7 @@ export class SqsProcessor
 
   private async handleMessage(message: AppQueueMessage): Promise<void> {
     const type = message.type;
-    console.log(`Handling message of type: ${type}`);
+
     switch (message.type) {
       case 'SYNC_RECORDS':
         await this.processSyncRecords(message.payload);
