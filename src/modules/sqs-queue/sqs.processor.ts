@@ -41,6 +41,17 @@ type LockedStoreSyncRecord = {
   status: SyncStatus;
 };
 
+/**
+ * Generic configuration object to inject domain-specific payload handling logic.
+ */
+interface ChunkProcessOptions<T> {
+  validatePayload: (payload: unknown) => payload is T;
+  processPayload: (
+    payload: T,
+    storeSyncRecord: any,
+  ) => Promise<{ totalInserted: number }>;
+}
+
 @Injectable()
 export class SqsProcessor
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -146,11 +157,11 @@ export class SqsProcessor
         return;
 
       case 'SYNC_RECORD_CHUNK':
-        await this.processSyncRecordChunk(message.payload, type);
+        await this.processSyncRecordChunk(message.payload);
         return;
 
       case 'SYNC_MY_HR_CHUNK':
-        await this.processSyncRecordChunk(message.payload, type);
+        await this.processMyHrRecordChunk(message.payload);
         return;
       default: {
         const unsupportedMessage = message as {
@@ -253,9 +264,12 @@ export class SqsProcessor
     }
   }
 
-  private async processSyncRecordChunk(
+  /**
+   * Reusable core processor for handling sync record chunks.
+   */
+  private async processGenericChunk<T>(
     messagePayload: SyncChunkMessage,
-    type: AppQueueType
+    options: ChunkProcessOptions<T>,
   ): Promise<void> {
     const chunk = await this.prisma.storeSyncRecordChunk.findUnique({
       where: {
@@ -286,6 +300,7 @@ export class SqsProcessor
       throw new Error(`Sync chunk not found: ${messagePayload.chunkId}`);
     }
 
+    // Handle terminal/already processing states early
     if (chunk.status === SyncStatus.SUCCESS) {
       this.logger.log(`Sync chunk ${chunk.id} already processed.`);
       await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
@@ -303,6 +318,7 @@ export class SqsProcessor
       return;
     }
 
+    // Atomic claim execution
     const claimResult = await this.prisma.storeSyncRecordChunk.updateMany({
       where: {
         id: chunk.id,
@@ -318,9 +334,7 @@ export class SqsProcessor
 
     if (claimResult.count === 0) {
       const currentChunk = await this.prisma.storeSyncRecordChunk.findUnique({
-        where: {
-          id: chunk.id,
-        },
+        where: { id: chunk.id },
         select: {
           status: true,
           storeSyncRecordID: true,
@@ -344,14 +358,10 @@ export class SqsProcessor
     }
 
     try {
-      if (type === 'SYNC_MY_HR_CHUNK') {
-        if (!this.isCreateMyHrRecord(chunk.payload)) {
-          throw new Error(`Invalid MyHR sync chunk payload: ${chunk.id}`);
-        }
-      } else {
-        if (!this.isCreateStoreSyncRecord(chunk.payload)) {
-          throw new Error(`Invalid store sync chunk payload: ${chunk.id}`);
-        }
+      if (!options.validatePayload(chunk.payload)) {
+        throw new Error(
+          `Invalid sync chunk payload: ${chunk.id}`,
+        );
       }
 
       if (chunk.storeSyncRecord.store.status !== Status.active) {
@@ -360,6 +370,7 @@ export class SqsProcessor
         );
       }
 
+      // Set root sync record to processing status
       await this.prisma.storeSyncRecord.updateMany({
         where: {
           id: chunk.storeSyncRecordID,
@@ -375,18 +386,14 @@ export class SqsProcessor
         },
       });
 
-      const result = type === 'SYNC_MY_HR_CHUNK' ? 
-        await this.insertMyHrPayload(chunk.payload as CreateMyHrRecord, [
-          chunk.storeSyncRecord,
-        ]) : 
-        await this.insertSyncPayload(chunk.payload as CreateStoreSyncRecord, [
-          chunk.storeSyncRecord,
-        ]);
+      const result = await options.processPayload(
+        chunk.payload,
+        chunk.storeSyncRecord,
+      );
 
+      // Mark chunk as SUCCESS
       await this.prisma.storeSyncRecordChunk.update({
-        where: {
-          id: chunk.id,
-        },
+        where: { id: chunk.id },
         data: {
           status: SyncStatus.SUCCESS,
           completedAt: new Date(),
@@ -420,35 +427,104 @@ export class SqsProcessor
     }
 
     await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
-
     this.logger.log(`Sync chunk ${chunk.id} completed.`);
   }
 
+  /**
+   * Clean wrapper functions replacing repetitive implementations
+   */
+  private async processMyHrRecordChunk(
+    messagePayload: SyncChunkMessage,
+  ): Promise<void> {
+    return this.processGenericChunk<CreateMyHrRecord>(messagePayload, {
+      validatePayload: (payload): payload is CreateMyHrRecord =>
+        this.isCreateMyHrRecord(payload),
+      processPayload: (payload, storeSyncRecord) =>
+        this.insertMyHrPayload(payload, [storeSyncRecord]),
+    });
+  }
+
+  private async processSyncRecordChunk(
+    messagePayload: SyncChunkMessage,
+  ): Promise<void> {
+    return this.processGenericChunk<CreateStoreSyncRecord>(messagePayload, {
+      validatePayload: (payload): payload is CreateStoreSyncRecord =>
+        this.isCreateStoreSyncRecord(payload),
+      processPayload: (payload, storeSyncRecord) =>
+        this.insertSyncPayload(payload, [storeSyncRecord]),
+    });
+  }
+
+  private async authenticateMyHr() {
+    const apiUrl = this.configService.getOrThrow<string>('MYHR_API_URL');
+    const username = this.configService.getOrThrow<string>('MYHR_USERNAME');
+    const password = this.configService.getOrThrow<string>('MYHR_PASSWORD');
+
+    const payload = { username, password };
+
+    try {
+      const response = await fetch(`${apiUrl}/api/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const responseBody = await response.text();
+
+      if (!response.ok) {
+        throw new Error(
+          `MyHR login failed: ${response.status} ${response.statusText} - ${responseBody}`,
+        );
+      }
+
+      const data = responseBody ? JSON.parse(responseBody) : {};
+    
+      const token = data.accessToken;
+
+      if (!token) {
+        throw new Error('MyHR login succeeded but no token was returned in response.');
+      }
+
+      return token;
+    } catch (error) {
+      this.logger?.error('MyHR authentication failed:', error);
+      // Re-throw to propagate failure up to the generic chunk handler
+      throw error;
+    }
+  }
+
+  /**
+   * Inserts MyHR biometric payload after acquiring an auth token.
+   */
   private async insertMyHrPayload(
     payload: CreateMyHrRecord,
     syncRecords: QueuedSyncRecord[],
   ): Promise<SyncInsertResult> {
-    // Combine all biometric records into ONE flat array
+    // 1. Authenticate and get token prior to sending payload
+    const token = await this.authenticateMyHr();
+
+    // 2. Combine all biometric records into ONE flat array
     const biometricRecords = payload.sync_record.flatMap(
       (record) => record.biometric_record,
     );
 
+    const apiUrl = `${this.configService.getOrThrow<string>('MYHR_API_URL')}/api/biometric/upload/bulk`;
+
     try {
-      const response = await fetch(
-        this.configService.getOrThrow<string>('MYHR_API_URL'),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(biometricRecords),
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`, // Pass the auth token here
         },
-      );
+        body: JSON.stringify(biometricRecords),
+      });
 
       const responseBody = await response.text();
 
-      console.log('MyHR status:', response.status);
-      console.log('MyHR response:', responseBody);
+      this.logger?.log(`MyHR status: ${response.status}`);
 
       if (!response.ok) {
         throw new Error(
@@ -457,26 +533,17 @@ export class SqsProcessor
       }
 
       let result: unknown;
-
       try {
-        result = responseBody
-          ? JSON.parse(responseBody)
-          : null;
+        result = responseBody ? JSON.parse(responseBody) : null;
       } catch {
         result = responseBody;
       }
 
-      console.log('MyHR endpoint response:', result);
-
       const totalInserted = biometricRecords.length;
-
       const insertedCountBySyncRecord = new Map<string, number>();
 
       for (const syncRecord of syncRecords) {
-        insertedCountBySyncRecord.set(
-          syncRecord.id,
-          totalInserted,
-        );
+        insertedCountBySyncRecord.set(syncRecord.id, totalInserted);
       }
 
       return {
@@ -484,17 +551,12 @@ export class SqsProcessor
         insertedCountBySyncRecord,
       };
     } catch (error) {
-      console.error('Failed to send MyHR payload:', {
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
-        url: this.configService.getOrThrow<string>('MYHR_API_URL'),
+      this.logger?.error('Failed to send MyHR payload:', {
+        error: error instanceof Error ? error.message : String(error),
+        url: apiUrl,
       });
 
-      // Important:
-      // Re-throw so processSyncRecordChunk()
-      // marks the chunk as FAILED.
+      // Re-throw so processGenericChunk marks the chunk as FAILED
       throw error;
     }
   }
