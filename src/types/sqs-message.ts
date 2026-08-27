@@ -28,9 +28,3 @@ export type AppQueueMessage =
   | QueueMessage<'SYNC_MY_HR_CHUNK', SyncChunkMessage>
   | QueueMessage<'SYNC_RECORDS', SyncMessage>
   | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>;
-
-
-export type AppQueueType = 
-  | 'SYNC_MY_HR_CHUNK'
-  | 'SYNC_RECORDS'
-  | 'SYNC_RECORD_CHUNK';

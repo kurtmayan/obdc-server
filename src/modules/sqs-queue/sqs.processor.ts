@@ -17,7 +17,6 @@ import {
 import { SQS_CLIENT } from './sqs.constants';
 import {
   AppQueueMessage,
-  AppQueueType,
   SyncChunkMessage,
   SyncMessage,
 } from 'src/types/sqs-message';
