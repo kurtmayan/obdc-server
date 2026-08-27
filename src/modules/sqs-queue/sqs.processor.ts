@@ -499,61 +499,112 @@ export class SqsProcessor
     payload: CreateMyHrRecord,
     syncRecords: QueuedSyncRecord[],
   ): Promise<SyncInsertResult> {
-    // 1. Authenticate and get token prior to sending payload
-    const token = await this.authenticateMyHr();
-
-    // 2. Combine all biometric records into ONE flat array
     const biometricRecords = payload.sync_record.flatMap(
       (record) => record.biometric_record,
     );
 
-    const apiUrl = `${this.configService.getOrThrow<string>('MYHR_API_URL')}/api/biometric/upload/bulk`;
+    if (biometricRecords.length === 0) {
+      throw new Error('No biometric records provided');
+    }
+
+    if (syncRecords.length !== 1) {
+      throw new Error(
+        'MyHR chunk must belong to exactly one StoreSyncRecord',
+      );
+    }
+
+    const storeSyncRecordID = syncRecords[0].id;
 
     try {
+      // 1. Authenticate with MyHR
+      const token = await this.authenticateMyHr();
+
+      const apiUrl =
+        `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
+        `/api/biometric/upload/bulk`;
+
+      // 2. Send biometric records to MyHR
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`, // Pass the auth token here
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(biometricRecords),
       });
 
+      // Read response body ONCE
       const responseBody = await response.text();
 
-      this.logger?.log(`MyHR status: ${response.status}`);
+      this.logger.log(`MyHR status: ${response.status}`);
 
       if (!response.ok) {
         throw new Error(
-          `MyHR endpoint failed: ${response.status} ${response.statusText} - ${responseBody}`,
+          `MyHR endpoint failed: ${response.status} ` +
+          `${response.statusText} - ${responseBody}`,
         );
       }
 
-      let result: unknown;
-      try {
-        result = responseBody ? JSON.parse(responseBody) : null;
-      } catch {
-        result = responseBody;
-      }
-
-      const totalInserted = biometricRecords.length;
-      const insertedCountBySyncRecord = new Map<string, number>();
-
-      for (const syncRecord of syncRecords) {
-        insertedCountBySyncRecord.set(syncRecord.id, totalInserted);
-      }
-
-      return {
-        totalInserted,
-        insertedCountBySyncRecord,
+      // Parse response
+      let responseJson: {
+        batchId?: string;
       };
-    } catch (error) {
-      this.logger?.error('Failed to send MyHR payload:', {
-        error: error instanceof Error ? error.message : String(error),
-        url: apiUrl,
+
+      try {
+        responseJson = responseBody
+          ? JSON.parse(responseBody)
+          : {};
+      } catch {
+        throw new Error(
+          `MyHR returned an invalid JSON response: ${responseBody}`,
+        );
+      }
+
+      // Make sure MyHR returned a batch ID
+      if (!responseJson.batchId) {
+        throw new Error(
+          `MyHR upload succeeded but no batchId was returned: ${responseBody}`,
+        );
+      }
+
+      // 3. Create MyHR batch
+      const batch = await this.prisma.myHRBatch.create({
+        data: {
+          id: responseJson.batchId,
+          storeSyncRecordID,
+        },
       });
 
-      // Re-throw so processGenericChunk marks the chunk as FAILED
+      // 4. Save biometric records
+      const result = await this.prisma.biometricRecord.createMany({
+        data: biometricRecords.map((record) => ({
+          empid: record.empid,
+          logdt: record.logdt,
+          logtm: record.logtm,
+          logstats: record.logstats === 1,
+          location: record.location,
+          batchID: batch.id,
+        })),
+      });
+
+      this.logger.log(
+        `MyHR upload successful. Sent ${biometricRecords.length} records. ` +
+        `Saved ${result.count} biometric records. ` +
+        `Batch ID: ${batch.id}`,
+      );
+
+      return {
+        totalInserted: result.count,
+        insertedCountBySyncRecord: new Map([
+          [storeSyncRecordID, result.count],
+        ]),
+      };
+    } catch (error) {
+      this.logger.error(
+        'Failed to send MyHR payload',
+        error instanceof Error ? error.stack : String(error),
+      );
+
       throw error;
     }
   }

@@ -77,6 +77,31 @@ model AttendanceRecord {
   storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
 }
 
+model BiometricRecord {
+  id        String   @id @default(cuid(2))
+  empid     String
+  logdt     String
+  logtm     String
+  logstats  Boolean
+  location  String
+
+  batchID   String
+  batch     MyHRBatch @relation(fields: [batchID], references: [id])
+
+  @@index([empid])
+  @@index([batchID])
+}
+
+model MyHRBatch {
+  id                String            @id
+  storeSyncRecordID String
+  biometricRecords  BiometricRecord[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  storeSyncRecord   StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+}
+
 enum SyncStatus {
   PENDING
   PROCESSING
@@ -100,6 +125,7 @@ model StoreSyncRecord {
   store            Stores                 @relation(fields: [storesId], references: [id], onDelete: Cascade)
   storesId         String
   attendanceRecord AttendanceRecord[]
+  myHRBatches MyHRBatch[]
   chunks           StoreSyncRecordChunk[]
 
   @@index([storesId, syncDate(sort: Desc)])
