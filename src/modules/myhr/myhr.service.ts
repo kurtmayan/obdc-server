@@ -6,7 +6,6 @@ import { Prisma } from 'src/generated/prisma/client';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 import { StoreSyncRecordGetPayload, StoreSyncRecordSelect } from 'src/generated/prisma/models';
 import * as ExcelJS from 'exceljs';
-import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import { getCellText } from 'src/lib/excel';
 import { FileSecurityService } from '../file-security/file-security.service';
 

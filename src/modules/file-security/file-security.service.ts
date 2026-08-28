@@ -102,23 +102,23 @@ export class FileSecurityService {
         );
 
         if (!fs.existsSync(publicKeyPath)) {
-        throw new BadRequestException(
-            `LBDC public key not found at ${publicKeyPath}`,
-        );
+            throw new BadRequestException(
+                `LBDC public key not found at ${publicKeyPath}`,
+            );
         }
 
         const publicKey = fs.readFileSync(publicKeyPath, 'utf8');
         const signature = Buffer.from(signatureBase64, 'base64');
 
         return crypto.verify(
-        'sha256',
-        excelBuffer,
-        {
-            key: publicKey,
-            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-            saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN,
-        },
-        signature,
+            'sha256',
+            excelBuffer,
+            {
+                key: publicKey,
+                padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN,
+            },
+            signature,
         );
     }
 }

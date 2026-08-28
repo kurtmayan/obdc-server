@@ -257,6 +257,11 @@ export class AttendanceService {
       },
       include: {
         attendanceRecord: true,
+        myHRBatches: {
+          include: {
+            biometricRecords: true,
+          },
+        }
       },
     });
 
@@ -265,7 +270,7 @@ export class AttendanceService {
       logDate: e.syncDate,
       lastSync: e.syncDate,
       status: e.status,
-      totalRecord: e.attendanceRecord.length,
+      totalRecord: e.attendanceRecord.length || e.myHRBatches.flatMap(batch => batch.biometricRecords ?? []).length,
     }));
   }
 
