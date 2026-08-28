@@ -1,4 +1,3 @@
-import { CreateMyHrRecord } from 'src/modules/myhr/dto/create-myhr.dto';
 import { CreateStoreSyncRecord } from 'src/modules/sync/dto/create-store-sync-record.dto';
 
 export interface QueueMessage<TType extends string, TPayload> {
@@ -13,7 +12,7 @@ export interface TestingMessage {
 }
 
 export interface SyncMessage {
-  payload: CreateStoreSyncRecord | CreateMyHrRecord;
+  payload: CreateStoreSyncRecord;
   syncRecords: {
     id: string;
     storesId: string;

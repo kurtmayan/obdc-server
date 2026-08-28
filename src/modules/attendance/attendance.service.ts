@@ -285,6 +285,11 @@ export class AttendanceService {
       },
       include: {
         attendanceRecord: true,
+        myHRBatches: {
+          include: {
+            biometricRecords: true
+          }
+        }
       },
     });
 

@@ -1,29 +1,13 @@
 // src/sqs/sqs-consumer.service.ts
 
-import {
-  Inject,
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-  OnApplicationShutdown,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  DeleteMessageCommand,
-  Message,
-  ReceiveMessageCommand,
-  SQSClient,
-} from '@aws-sdk/client-sqs';
+import { DeleteMessageCommand, Message, ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { SQS_CLIENT } from './sqs.constants';
-import {
-  AppQueueMessage,
-  SyncChunkMessage,
-  SyncMessage,
-} from 'src/types/sqs-message';
+import { AppQueueMessage, SyncChunkMessage, SyncMessage } from 'src/types/sqs-message';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
-import { CreateMyHrRecord } from '../myhr/dto/create-myhr.dto';
 
 type QueuedSyncRecord = {
   id: string;
@@ -40,30 +24,33 @@ type LockedStoreSyncRecord = {
   status: SyncStatus;
 };
 
-/**
- * Generic configuration object to inject domain-specific payload handling logic.
- */
-interface ChunkProcessOptions<T> {
-  validatePayload: (payload: unknown) => payload is T;
-  processPayload: (
-    payload: T,
-    storeSyncRecord: any,
-  ) => Promise<{ totalInserted: number }>;
-}
+type AttendanceInsert = {
+  id: string;
+  employeeName: string;
+  userId: string;
+  logDate: Date;
+  logType: number;
+  storeSyncRecordID: string;
+  location: string;
+};
+
+type MyHrPayload = {
+  empid: string;
+  logdt: string;
+  logtm: string;
+  logstats: number;
+  location: string;
+};
 
 @Injectable()
-export class SqsProcessor
-  implements OnApplicationBootstrap, OnApplicationShutdown
-{
+export class SqsProcessor implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(SqsProcessor.name);
   private readonly queueUrl: string;
   private readonly visibilityTimeoutSeconds: number;
-
   private running = false;
 
   constructor(
-    @Inject(SQS_CLIENT)
-    private readonly sqsClient: SQSClient,
+    @Inject(SQS_CLIENT) private readonly sqsClient: SQSClient,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {
@@ -85,26 +72,17 @@ export class SqsProcessor
 
     while (this.running) {
       try {
-        const response = await this.sqsClient.send(
-          new ReceiveMessageCommand({
-            QueueUrl: this.queueUrl,
-            MaxNumberOfMessages: 10,
-            WaitTimeSeconds: 20,
-            VisibilityTimeout: this.visibilityTimeoutSeconds,
-          }),
-        );
+        const response = await this.sqsClient.send(new ReceiveMessageCommand({
+          QueueUrl: this.queueUrl,
+          MaxNumberOfMessages: 10,
+          WaitTimeSeconds: 20,
+          VisibilityTimeout: this.visibilityTimeoutSeconds,
+        }));
 
         const messages = response.Messages ?? [];
-
-        await Promise.all(
-          messages.map((message) => this.processMessage(message)),
-        );
+        await Promise.all(messages.map((message) => this.processMessage(message)));
       } catch (error) {
-        this.logger.error(
-          'Failed to poll SQS',
-          error instanceof Error ? error.stack : String(error),
-        );
-
+        this.logger.error('Failed to poll SQS', error instanceof Error ? error.stack : String(error));
         await this.delay(5000);
       }
     }
@@ -114,9 +92,7 @@ export class SqsProcessor
     const { Body, ReceiptHandle, MessageId } = message;
 
     if (!Body || !ReceiptHandle) {
-      this.logger.warn(
-        `Received an invalid SQS message: ${MessageId ?? 'unknown'}`,
-      );
+      this.logger.warn(`Received an invalid SQS message: ${MessageId ?? 'unknown'}`);
       return;
     }
 
@@ -129,21 +105,14 @@ export class SqsProcessor
 
       await this.handleMessage(parsed);
 
-      await this.sqsClient.send(
-        new DeleteMessageCommand({
-          QueueUrl: this.queueUrl,
-          ReceiptHandle,
-        }),
-      );
+      await this.sqsClient.send(new DeleteMessageCommand({
+        QueueUrl: this.queueUrl,
+        ReceiptHandle,
+      }));
 
-      this.logger.log(
-        `Successfully processed message ${MessageId ?? 'unknown'}`,
-      );
+      this.logger.log(`Successfully processed message ${MessageId ?? 'unknown'}`);
     } catch (error) {
-      this.logger.error(
-        `Failed to process message ${MessageId ?? 'unknown'}`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      this.logger.error(`Failed to process message ${MessageId ?? 'unknown'}`, error instanceof Error ? error.stack : String(error));
     }
   }
 
@@ -152,40 +121,21 @@ export class SqsProcessor
       case 'SYNC_RECORDS':
         await this.processSyncRecords(message.payload);
         return;
-
       case 'SYNC_RECORD_CHUNK':
         await this.processSyncRecordChunk(message.payload);
         return;
-
-      case 'SYNC_MY_HR_CHUNK':
-        await this.processMyHrRecordChunk(message.payload);
-        return;
-      default: {
-        const unsupportedMessage = message as {
-          type?: unknown;
-        };
-
-        throw new Error(
-          `Unsupported SQS message type: ${String(unsupportedMessage.type)}`,
-        );
-      }
+      default:
+        throw new Error(`Unsupported SQS message type: ${String(message.type)}`);
     }
   }
 
   private delay(milliseconds: number): Promise<void> {
-    return new Promise((resolve) => {
-      setTimeout(resolve, milliseconds);
-    });
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
   private getVisibilityTimeoutSeconds(): number {
-    const configuredTimeout = Number(
-      this.configService.get<string>('AWS_SQS_VISIBILITY_TIMEOUT_SECONDS'),
-    );
-
-    return Number.isFinite(configuredTimeout) && configuredTimeout > 0
-      ? configuredTimeout
-      : 300;
+    const configuredTimeout = Number(this.configService.get<string>('AWS_SQS_VISIBILITY_TIMEOUT_SECONDS'));
+    return Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 300;
   }
 
   private async processSyncRecords(messagePayload: SyncMessage): Promise<void> {
@@ -199,59 +149,39 @@ export class SqsProcessor
 
     try {
       await this.prisma.storeSyncRecord.updateMany({
-        where: {
-          id: {
-            in: syncRecordIds,
-          },
-        },
+        where: { id: { in: syncRecordIds } },
         data: {
-          status: 'PROCESSING',
+          status: SyncStatus.PROCESSING,
           startedAt: new Date(),
           completedAt: null,
           errorMessage: null,
         },
       });
 
-      if (!this.isCreateStoreSyncRecord(payload)) {
-        throw new Error('Invalid sync payload');
-      }
-
-      const result = await this.insertSyncPayload(payload as CreateStoreSyncRecord, syncRecords);
+      const result = await this.insertSyncPayload(payload, syncRecords);
 
       await this.prisma.$transaction(
         syncRecords.map((syncRecord) =>
           this.prisma.storeSyncRecord.update({
-            where: {
-              id: syncRecord.id,
-            },
+            where: { id: syncRecord.id },
             data: {
-              status: 'SUCCESS',
+              status: SyncStatus.SUCCESS,
               completedAt: new Date(),
               errorMessage: null,
-              insertedRecords:
-                result.insertedCountBySyncRecord.get(syncRecord.id) ?? 0,
+              insertedRecords: result.insertedCountBySyncRecord.get(syncRecord.id) ?? 0,
             },
           }),
         ),
       );
 
-      this.logger.log(
-        `Sync completed. Inserted ${result.totalInserted} attendance records.`,
-      );
+      this.logger.log(`Sync completed. Inserted ${result.totalInserted} attendance records.`);
     } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Unknown error occurred while syncing records';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred while syncing records';
 
       await this.prisma.storeSyncRecord.updateMany({
-        where: {
-          id: {
-            in: syncRecordIds,
-          },
-        },
+        where: { id: { in: syncRecordIds } },
         data: {
-          status: 'FAILED',
+          status: SyncStatus.FAILED,
           completedAt: new Date(),
           errorMessage,
         },
@@ -261,17 +191,9 @@ export class SqsProcessor
     }
   }
 
-  /**
-   * Reusable core processor for handling sync record chunks.
-   */
-  private async processGenericChunk<T>(
-    messagePayload: SyncChunkMessage,
-    options: ChunkProcessOptions<T>,
-  ): Promise<void> {
+  private async processSyncRecordChunk(messagePayload: SyncChunkMessage): Promise<void> {
     const chunk = await this.prisma.storeSyncRecordChunk.findUnique({
-      where: {
-        id: messagePayload.chunkId,
-      },
+      where: { id: messagePayload.chunkId },
       select: {
         id: true,
         status: true,
@@ -297,15 +219,8 @@ export class SqsProcessor
       throw new Error(`Sync chunk not found: ${messagePayload.chunkId}`);
     }
 
-    // Handle terminal/already processing states early
-    if (chunk.status === SyncStatus.SUCCESS) {
+    if (chunk.status === SyncStatus.SUCCESS || chunk.status === SyncStatus.FAILED) {
       this.logger.log(`Sync chunk ${chunk.id} already processed.`);
-      await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
-      return;
-    }
-
-    if (chunk.status === SyncStatus.FAILED) {
-      this.logger.log(`Sync chunk ${chunk.id} already failed.`);
       await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
       return;
     }
@@ -315,7 +230,6 @@ export class SqsProcessor
       return;
     }
 
-    // Atomic claim execution
     const claimResult = await this.prisma.storeSyncRecordChunk.updateMany({
       where: {
         id: chunk.id,
@@ -342,10 +256,7 @@ export class SqsProcessor
         throw new Error(`Sync chunk not found: ${chunk.id}`);
       }
 
-      if (
-        currentChunk.status === SyncStatus.SUCCESS ||
-        currentChunk.status === SyncStatus.FAILED
-      ) {
+      if (currentChunk.status === SyncStatus.SUCCESS || currentChunk.status === SyncStatus.FAILED) {
         await this.finalizeStoreSyncRecord(currentChunk.storeSyncRecordID);
         return;
       }
@@ -355,25 +266,18 @@ export class SqsProcessor
     }
 
     try {
-      if (!options.validatePayload(chunk.payload)) {
-        throw new Error(
-          `Invalid sync chunk payload: ${chunk.id}`,
-        );
+      if (!this.isCreateStoreSyncRecord(chunk.payload)) {
+        throw new Error(`Invalid sync chunk payload: ${chunk.id}`);
       }
 
       if (chunk.storeSyncRecord.store.status !== Status.active) {
-        throw new Error(
-          `Inactive store cannot sync: ${chunk.storeSyncRecord.store.name}`,
-        );
+        throw new Error(`Inactive store cannot sync: ${chunk.storeSyncRecord.store.name}`);
       }
 
-      // Set root sync record to processing status
       await this.prisma.storeSyncRecord.updateMany({
         where: {
           id: chunk.storeSyncRecordID,
-          status: {
-            notIn: [SyncStatus.SUCCESS, SyncStatus.FAILED],
-          },
+          status: { notIn: [SyncStatus.SUCCESS, SyncStatus.FAILED] },
         },
         data: {
           status: SyncStatus.PROCESSING,
@@ -383,12 +287,8 @@ export class SqsProcessor
         },
       });
 
-      const result = await options.processPayload(
-        chunk.payload,
-        chunk.storeSyncRecord,
-      );
+      const result = await this.insertSyncPayload(chunk.payload, [chunk.storeSyncRecord]);
 
-      // Mark chunk as SUCCESS
       await this.prisma.storeSyncRecordChunk.update({
         where: { id: chunk.id },
         data: {
@@ -400,10 +300,7 @@ export class SqsProcessor
         },
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : 'Unknown error occurred while syncing chunk';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred while syncing chunk';
 
       await this.prisma.storeSyncRecordChunk.updateMany({
         where: {
@@ -419,7 +316,6 @@ export class SqsProcessor
       });
 
       await this.finalizeStoreSyncRecord(chunk.storeSyncRecordID);
-
       throw error;
     }
 
@@ -427,206 +323,18 @@ export class SqsProcessor
     this.logger.log(`Sync chunk ${chunk.id} completed.`);
   }
 
-  /**
-   * Clean wrapper functions replacing repetitive implementations
-   */
-  private async processMyHrRecordChunk(
-    messagePayload: SyncChunkMessage,
-  ): Promise<void> {
-    return this.processGenericChunk<CreateMyHrRecord>(messagePayload, {
-      validatePayload: (payload): payload is CreateMyHrRecord =>
-        this.isCreateMyHrRecord(payload),
-      processPayload: (payload, storeSyncRecord) =>
-        this.insertMyHrPayload(payload, [storeSyncRecord]),
-    });
-  }
-
-  private async processSyncRecordChunk(
-    messagePayload: SyncChunkMessage,
-  ): Promise<void> {
-    return this.processGenericChunk<CreateStoreSyncRecord>(messagePayload, {
-      validatePayload: (payload): payload is CreateStoreSyncRecord =>
-        this.isCreateStoreSyncRecord(payload),
-      processPayload: (payload, storeSyncRecord) =>
-        this.insertSyncPayload(payload, [storeSyncRecord]),
-    });
-  }
-
-  private async authenticateMyHr() {
-    const apiUrl = this.configService.getOrThrow<string>('MYHR_API_URL');
-    const username = this.configService.getOrThrow<string>('MYHR_USERNAME');
-    const password = this.configService.getOrThrow<string>('MYHR_PASSWORD');
-
-    const payload = { username, password };
-
-    try {
-      const response = await fetch(`${apiUrl}/api/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const responseBody = await response.text();
-
-      if (!response.ok) {
-        throw new Error(
-          `MyHR login failed: ${response.status} ${response.statusText} - ${responseBody}`,
-        );
-      }
-
-      const data = responseBody ? JSON.parse(responseBody) : {};
-    
-      const token = data.accessToken;
-
-      if (!token) {
-        throw new Error('MyHR login succeeded but no token was returned in response.');
-      }
-
-      return token;
-    } catch (error) {
-      this.logger?.error('MyHR authentication failed:', error);
-      // Re-throw to propagate failure up to the generic chunk handler
-      throw error;
-    }
-  }
-
-  /**
-   * Inserts MyHR biometric payload after acquiring an auth token.
-   */
-  private async insertMyHrPayload(
-    payload: CreateMyHrRecord,
-    syncRecords: QueuedSyncRecord[],
-  ): Promise<SyncInsertResult> {
-    const biometricRecords = payload.sync_record.flatMap(
-      (record) => record.biometric_record,
-    );
-
-    if (biometricRecords.length === 0) {
-      throw new Error('No biometric records provided');
-    }
-
-    if (syncRecords.length !== 1) {
-      throw new Error(
-        'MyHR chunk must belong to exactly one StoreSyncRecord',
-      );
-    }
-
-    const storeSyncRecordID = syncRecords[0].id;
-
-    try {
-      // 1. Authenticate with MyHR
-      const token = await this.authenticateMyHr();
-
-      const apiUrl =
-        `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
-        `/api/biometric/upload/bulk`;
-
-      // 2. Send biometric records to MyHR
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(biometricRecords),
-      });
-
-      // Read response body ONCE
-      const responseBody = await response.text();
-
-      this.logger.log(`MyHR status: ${response.status}`);
-
-      if (!response.ok) {
-        throw new Error(
-          `MyHR endpoint failed: ${response.status} ` +
-          `${response.statusText} - ${responseBody}`,
-        );
-      }
-
-      // Parse response
-      let responseJson: {
-        batchId?: string;
-      };
-
-      try {
-        responseJson = responseBody
-          ? JSON.parse(responseBody)
-          : {};
-      } catch {
-        throw new Error(
-          `MyHR returned an invalid JSON response: ${responseBody}`,
-        );
-      }
-
-      // Make sure MyHR returned a batch ID
-      if (!responseJson.batchId) {
-        throw new Error(
-          `MyHR upload succeeded but no batchId was returned: ${responseBody}`,
-        );
-      }
-
-      // 3. Create MyHR batch
-      const batch = await this.prisma.myHRBatch.create({
-        data: {
-          id: responseJson.batchId,
-          storeSyncRecordID,
-        },
-      });
-
-      // 4. Save biometric records
-      const result = await this.prisma.biometricRecord.createMany({
-        data: biometricRecords.map((record) => ({
-          empid: record.empid,
-          logdt: record.logdt,
-          logtm: record.logtm,
-          logstats: record.logstats === 1,
-          location: record.location,
-          batchID: batch.id,
-        })),
-      });
-
-      this.logger.log(
-        `MyHR upload successful. Sent ${biometricRecords.length} records. ` +
-        `Saved ${result.count} biometric records. ` +
-        `Batch ID: ${batch.id}`,
-      );
-
-      return {
-        totalInserted: result.count,
-        insertedCountBySyncRecord: new Map([
-          [storeSyncRecordID, result.count],
-        ]),
-      };
-    } catch (error) {
-      this.logger.error(
-        'Failed to send MyHR payload',
-        error instanceof Error ? error.stack : String(error),
-      );
-
-      throw error;
-    }
-  }
-
   private async insertSyncPayload(
     payload: CreateStoreSyncRecord,
     syncRecords: QueuedSyncRecord[],
   ): Promise<SyncInsertResult> {
-    const deviceIds = [
-      ...new Set(payload.sync_record.map((record) => record.device_id)),
-    ];
+    const deviceIds = [...new Set(payload.sync_record.map((record) => record.device_id))];
 
     if (deviceIds.length === 0) {
       throw new Error('No devices provided');
     }
 
     const devices = await this.prisma.devices.findMany({
-      where: {
-        serialNumber: {
-          in: deviceIds,
-        },
-      },
+      where: { serialNumber: { in: deviceIds } },
       select: {
         serialNumber: true,
         storesId: true,
@@ -639,13 +347,9 @@ export class SqsProcessor
       },
     });
 
-    const deviceMap = new Map(
-      devices.map((device) => [device.serialNumber, device]),
-    );
+    const deviceMap = new Map(devices.map((device) => [device.serialNumber, device]));
 
-    const missingDeviceIds = deviceIds.filter(
-      (deviceId) => !deviceMap.has(deviceId),
-    );
+    const missingDeviceIds = deviceIds.filter((deviceId) => !deviceMap.has(deviceId));
 
     if (missingDeviceIds.length > 0) {
       throw new Error(`Devices not found: ${missingDeviceIds.join(', ')}`);
@@ -660,14 +364,10 @@ export class SqsProcessor
     ];
 
     if (inactiveStoreNames.length > 0) {
-      throw new Error(
-        `Inactive stores cannot sync: ${inactiveStoreNames.join(', ')}`,
-      );
+      throw new Error(`Inactive stores cannot sync: ${inactiveStoreNames.join(', ')}`);
     }
 
-    const storeToSyncMap = new Map(
-      syncRecords.map((syncRecord) => [syncRecord.storesId, syncRecord.id]),
-    );
+    const storeToSyncMap = new Map(syncRecords.map((syncRecord) => [syncRecord.storesId, syncRecord.id]));
 
     const incomingAttendanceIds = [
       ...new Set(
@@ -677,50 +377,37 @@ export class SqsProcessor
       ),
     ];
 
-    const existingAttendance =
-      incomingAttendanceIds.length === 0
-        ? []
-        : await this.prisma.attendanceRecord.findMany({
-            where: {
-              id: {
-                in: incomingAttendanceIds,
-              },
-            },
-            select: {
-              id: true,
-            },
-          });
+    const existingAttendance = incomingAttendanceIds.length === 0
+      ? []
+      : await this.prisma.attendanceRecord.findMany({
+          where: { id: { in: incomingAttendanceIds } },
+          select: { id: true },
+        });
 
-    const processedAttendanceIds = new Set(
-      existingAttendance.map((record) => record.id),
-    );
-
-    type AttendanceInsert = {
-      id: string;
-      employeeName: string;
-      userId: string;
-      logDate: Date;
-      logType: number;
-      storeSyncRecordID: string;
-    };
+    const processedAttendanceIds = new Set(existingAttendance.map((record) => record.id));
 
     const CHUNK_SIZE = 500;
-
     let batch: AttendanceInsert[] = [];
     let totalInserted = 0;
 
     const insertedCountBySyncRecord = new Map<string, number>();
+    const insertedAttendance: AttendanceInsert[] = [];
 
     const insertBatch = async (): Promise<void> => {
-      if (batch.length === 0) {
-        return;
-      }
+      if (batch.length === 0) return;
 
       const currentBatch = batch;
       batch = [];
 
       const created = await this.prisma.attendanceRecord.createMany({
-        data: currentBatch,
+        data: currentBatch.map((item) => ({
+          id: item.id,
+          employeeName: item.employeeName,
+          userId: item.userId,
+          logDate: item.logDate,
+          logType: item.logType,
+          storeSyncRecordID: item.storeSyncRecordID,
+        })),
         skipDuplicates: true,
       });
 
@@ -728,6 +415,7 @@ export class SqsProcessor
 
       if (syncRecords.length === 1) {
         const syncRecordId = syncRecords[0].id;
+
         insertedCountBySyncRecord.set(
           syncRecordId,
           (insertedCountBySyncRecord.get(syncRecordId) ?? 0) + created.count,
@@ -764,19 +452,16 @@ export class SqsProcessor
       }
 
       for (const log of record.attendance_record) {
-        if (processedAttendanceIds.has(log.id)) {
-          continue;
-        }
-
-        const logDate = this.parseLogDate(log.log_date);
+        if (processedAttendanceIds.has(log.id)) continue;
 
         batch.push({
           id: log.id,
           employeeName: log.employee_name,
           userId: log.employee_id,
-          logDate,
+          logDate: this.parseLogDate(log.log_date),
           logType: log.punch,
           storeSyncRecordID: syncRecordId,
+          location: device.store.name,
         });
 
         processedAttendanceIds.add(log.id);
@@ -789,15 +474,39 @@ export class SqsProcessor
 
     await insertBatch();
 
+    if (insertedAttendance.length > 0) {
+      const myHrPayload = insertedAttendance.map((attendance) =>
+        this.attendanceToMyHrPayload(attendance),
+      );
+
+      await this.insertMyHrPayload(myHrPayload, syncRecords);
+    }
+
+    return { totalInserted, insertedCountBySyncRecord };
+  }
+
+  private attendanceToMyHrPayload(attendance: AttendanceInsert): MyHrPayload {
+    const date = attendance.logDate;
+
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
+
+    const logdt = `${month}/${day}/${year}`;
+    const logtm = `${logdt} ${hours}:${minutes}`;
+
     return {
-      totalInserted,
-      insertedCountBySyncRecord,
+      empid: attendance.userId,
+      logdt,
+      logtm,
+      logstats: attendance.logType,
+      location: attendance.location,
     };
   }
 
-  private async finalizeStoreSyncRecord(
-    storeSyncRecordID: string,
-  ): Promise<void> {
+  private async finalizeStoreSyncRecord(storeSyncRecordID: string): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       const lockedRecords = await tx.$queryRaw<LockedStoreSyncRecord[]>`
         SELECT id, status
@@ -818,9 +527,7 @@ export class SqsProcessor
             storeSyncRecordID,
             status: SyncStatus.FAILED,
           },
-          select: {
-            errorMessage: true,
-          },
+          select: { errorMessage: true },
         }),
         tx.storeSyncRecordChunk.count({
           where: {
@@ -831,9 +538,7 @@ export class SqsProcessor
           },
         }),
         tx.storeSyncRecordChunk.aggregate({
-          where: {
-            storeSyncRecordID,
-          },
+          where: { storeSyncRecordID },
           _sum: {
             insertedRecords: true,
             failedRecords: true,
@@ -843,9 +548,7 @@ export class SqsProcessor
 
       if (failedChunk) {
         await tx.storeSyncRecord.update({
-          where: {
-            id: storeSyncRecordID,
-          },
+          where: { id: storeSyncRecordID },
           data: {
             status: SyncStatus.FAILED,
             completedAt: new Date(),
@@ -854,21 +557,17 @@ export class SqsProcessor
             errorMessage: failedChunk.errorMessage,
           },
         });
+
         return;
       }
 
       if (incompleteChunks > 0) {
-        if (
-          lockedRecord.status === SyncStatus.SUCCESS ||
-          lockedRecord.status === SyncStatus.FAILED
-        ) {
+        if (lockedRecord.status === SyncStatus.SUCCESS || lockedRecord.status === SyncStatus.FAILED) {
           return;
         }
 
         await tx.storeSyncRecord.update({
-          where: {
-            id: storeSyncRecordID,
-          },
+          where: { id: storeSyncRecordID },
           data: {
             status: SyncStatus.PROCESSING,
             insertedRecords: aggregate._sum.insertedRecords ?? 0,
@@ -877,13 +576,12 @@ export class SqsProcessor
             errorMessage: null,
           },
         });
+
         return;
       }
 
       await tx.storeSyncRecord.update({
-        where: {
-          id: storeSyncRecordID,
-        },
+        where: { id: storeSyncRecordID },
         data: {
           status: SyncStatus.SUCCESS,
           completedAt: new Date(),
@@ -896,142 +594,54 @@ export class SqsProcessor
   }
 
   private isAppQueueMessage(value: unknown): value is AppQueueMessage {
-    if (!value || typeof value !== 'object') {
-      return false;
-    }
+    if (!value || typeof value !== 'object') return false;
 
     const message = value as Record<string, unknown>;
 
-    if (typeof message.createdAt !== 'string') {
-      return false;
-    }
+    if (typeof message.createdAt !== 'string') return false;
+    if (!message.payload || typeof message.payload !== 'object') return false;
 
-    if (!message.payload || typeof message.payload !== 'object') {
-      return false;
-    }
-
-    if (message.type === 'SYNC_RECORD_CHUNK' || message.type === 'SYNC_MY_HR_CHUNK'
-    ) {
+    if (message.type === 'SYNC_RECORD_CHUNK') {
       const chunkPayload = message.payload as Record<string, unknown>;
-
       return typeof chunkPayload.chunkId === 'string';
     }
 
-    if (message.type !== 'SYNC_RECORDS') {
-      return false;
-    }
+    if (message.type !== 'SYNC_RECORDS') return false;
 
     const messagePayload = message.payload as Record<string, unknown>;
 
-    if (!messagePayload.payload || typeof messagePayload.payload !== 'object') {
-      return false;
-    }
-
-    if (!Array.isArray(messagePayload.syncRecords)) {
-      return false;
-    }
-
-    if (!this.isCreateStoreSyncRecord(messagePayload.payload) && !this.isCreateMyHrRecord(messagePayload.payload)) {
-      return false;
-    }
-
-    const syncPayload = messagePayload.payload;
+    if (!messagePayload.payload || typeof messagePayload.payload !== 'object') return false;
+    if (!Array.isArray(messagePayload.syncRecords)) return false;
+    if (!this.isCreateStoreSyncRecord(messagePayload.payload)) return false;
 
     const validSyncRecords = messagePayload.syncRecords.every((record) => {
-      if (!record || typeof record !== 'object') {
-        return false;
-      }
+      if (!record || typeof record !== 'object') return false;
 
       const item = record as Record<string, unknown>;
-
       return typeof item.id === 'string' && typeof item.storesId === 'string';
     });
 
-    if (!validSyncRecords) {
-      return false;
-    }
-
-    return validSyncRecords && (this.isCreateStoreSyncRecord(syncPayload) || this.isCreateMyHrRecord(syncPayload));
+    return validSyncRecords && this.isCreateStoreSyncRecord(messagePayload.payload);
   }
 
-  private isCreateMyHrRecord(
-    value: unknown,
-  ): value is CreateMyHrRecord {
-    if (!value || typeof value !== 'object') {
-      return false;
-    }
+  private isCreateStoreSyncRecord(value: unknown): value is CreateStoreSyncRecord {
+    if (!value || typeof value !== 'object') return false;
 
     const syncPayload = value as Record<string, unknown>;
 
-    if (!Array.isArray(syncPayload.sync_record)) {
-      return false;
-    }
+    if (!Array.isArray(syncPayload.sync_record)) return false;
 
     return syncPayload.sync_record.every((record) => {
-      if (!record || typeof record !== 'object') {
-        return false;
-      }
+      if (!record || typeof record !== 'object') return false;
 
       const item = record as Record<string, unknown>;
 
-      // Validate MyHR record
-      if (
-        typeof item.device_id !== 'string' ||
-        !Array.isArray(item.biometric_record)
-      ) {
-        return false;
-      }
-
-      // Validate biometric records
-      return item.biometric_record.every((biometric) => {
-        if (!biometric || typeof biometric !== 'object') {
-          return false;
-        }
-
-        const log = biometric as Record<string, unknown>;
-
-        return (
-          typeof log.empid === 'string' &&
-          typeof log.logdt === 'string' &&
-          typeof log.logtm === 'string' &&
-          typeof log.logstats === 'number' &&
-          typeof log.location === 'string'
-        );
-      });
-    });
-  }
-
-  private isCreateStoreSyncRecord(
-    value: unknown,
-  ): value is CreateStoreSyncRecord {
-    if (!value || typeof value !== 'object') {
-      return false;
-    }
-
-    const syncPayload = value as Record<string, unknown>;
-
-    if (!Array.isArray(syncPayload.sync_record)) {
-      return false;
-    }
-
-    return syncPayload.sync_record.every((record) => {
-      if (!record || typeof record !== 'object') {
-        return false;
-      }
-
-      const item = record as Record<string, unknown>;
-
-      if (
-        typeof item.device_id !== 'string' ||
-        !Array.isArray(item.attendance_record)
-      ) {
+      if (typeof item.device_id !== 'string' || !Array.isArray(item.attendance_record)) {
         return false;
       }
 
       return item.attendance_record.every((attendance) => {
-        if (!attendance || typeof attendance !== 'object') {
-          return false;
-        }
+        if (!attendance || typeof attendance !== 'object') return false;
 
         const log = attendance as Record<string, unknown>;
 
@@ -1048,9 +658,7 @@ export class SqsProcessor
 
   private parseLogDate(value: string): Date {
     const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
-
     const normalized = hasTimezone ? value : `${value}Z`;
-
     const date = new Date(normalized);
 
     if (Number.isNaN(date.getTime())) {
@@ -1058,5 +666,111 @@ export class SqsProcessor
     }
 
     return date;
+  }
+
+  private async authenticateMyHr(): Promise<string> {
+    const apiUrl = this.configService.getOrThrow<string>('MYHR_API_URL');
+    const username = this.configService.getOrThrow<string>('MYHR_USERNAME');
+    const password = this.configService.getOrThrow<string>('MYHR_PASSWORD');
+
+    const response = await fetch(`${apiUrl}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const responseBody = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`MyHR login failed: ${response.status} ${response.statusText} - ${responseBody}`);
+    }
+
+    let data: { accessToken?: string };
+
+    try {
+      data = responseBody ? JSON.parse(responseBody) : {};
+    } catch {
+      throw new Error(`MyHR login returned invalid JSON: ${responseBody}`);
+    }
+
+    if (!data.accessToken) {
+      throw new Error('MyHR login succeeded but no token was returned.');
+    }
+
+    return data.accessToken;
+  }
+
+  private async insertMyHrPayload(
+    payload: MyHrPayload[],
+    syncRecords: QueuedSyncRecord[],
+  ): Promise<SyncInsertResult> {
+    if (payload.length === 0) {
+      return {
+        totalInserted: 0,
+        insertedCountBySyncRecord: new Map(),
+      };
+    }
+
+    if (syncRecords.length !== 1) {
+      throw new Error('MyHR upload currently requires exactly one sync record.');
+    }
+
+    const storeSyncRecordID = syncRecords[0].id;
+    const token = await this.authenticateMyHr();
+    const apiUrl = `${this.configService.getOrThrow<string>('MYHR_API_URL')}/api/biometric/upload/bulk`;
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseBody = await response.text();
+
+    this.logger.log(`MyHR upload status: ${response.status}`);
+
+    if (!response.ok) {
+      throw new Error(`MyHR endpoint failed: ${response.status} ${response.statusText} - ${responseBody}`);
+    }
+
+    let responseJson: { batchId?: string };
+
+    try {
+      responseJson = responseBody ? JSON.parse(responseBody) : {};
+    } catch {
+      throw new Error(`MyHR returned invalid JSON: ${responseBody}`);
+    }
+
+    if (!responseJson.batchId) {
+      throw new Error(`MyHR upload succeeded but no batchId was returned.`);
+    }
+
+    const batch = await this.prisma.myHRBatch.create({
+      data: {
+        id: responseJson.batchId,
+        storeSyncRecordID,
+      },
+    });
+
+    const result = await this.prisma.biometricRecord.createMany({
+      data: payload.map((record) => ({
+        empid: record.empid,
+        logdt: record.logdt,
+        logtm: record.logtm,
+        logstats: record.logstats === 1,
+        location: record.location,
+        batchID: batch.id,
+      })),
+    });
+
+    this.logger.log(`MyHR upload successful. Sent ${payload.length}, saved ${result.count}, batch ${batch.id}`);
+
+    return {
+      totalInserted: result.count,
+      insertedCountBySyncRecord: new Map([[storeSyncRecordID, result.count]]),
+    };
   }
 }
