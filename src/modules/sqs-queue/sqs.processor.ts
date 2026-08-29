@@ -8,6 +8,7 @@ import { AppQueueMessage, SyncChunkMessage, SyncMessage } from 'src/types/sqs-me
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
+import authenticateMyHr from 'src/lib/authenticateMyHr';
 
 type QueuedSyncRecord = {
   id: string;
@@ -668,38 +669,6 @@ export class SqsProcessor implements OnApplicationBootstrap, OnApplicationShutdo
     return date;
   }
 
-  private async authenticateMyHr(): Promise<string> {
-    const apiUrl = this.configService.getOrThrow<string>('MYHR_API_URL');
-    const username = this.configService.getOrThrow<string>('MYHR_USERNAME');
-    const password = this.configService.getOrThrow<string>('MYHR_PASSWORD');
-
-    const response = await fetch(`${apiUrl}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-
-    const responseBody = await response.text();
-
-    if (!response.ok) {
-      throw new Error(`MyHR login failed: ${response.status} ${response.statusText} - ${responseBody}`);
-    }
-
-    let data: { accessToken?: string };
-
-    try {
-      data = responseBody ? JSON.parse(responseBody) : {};
-    } catch {
-      throw new Error(`MyHR login returned invalid JSON: ${responseBody}`);
-    }
-
-    if (!data.accessToken) {
-      throw new Error('MyHR login succeeded but no token was returned.');
-    }
-
-    return data.accessToken;
-  }
-
   private async insertMyHrPayload(
     payload: MyHrPayload[],
     syncRecords: QueuedSyncRecord[],
@@ -716,7 +685,7 @@ export class SqsProcessor implements OnApplicationBootstrap, OnApplicationShutdo
     }
 
     const storeSyncRecordID = syncRecords[0].id;
-    const token = await this.authenticateMyHr();
+    const token = await authenticateMyHr(this.configService);
     const apiUrl = `${this.configService.getOrThrow<string>('MYHR_API_URL')}/api/biometric/upload/bulk`;
 
     const response = await fetch(apiUrl, {

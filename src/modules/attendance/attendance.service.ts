@@ -270,7 +270,7 @@ export class AttendanceService {
       logDate: e.syncDate,
       lastSync: e.syncDate,
       status: e.status,
-      totalRecord: e.attendanceRecord.length || e.myHRBatches.flatMap(batch => batch.biometricRecords ?? []).length,
+      totalRecord: e.attendanceRecord.length,
     }));
   }
 
