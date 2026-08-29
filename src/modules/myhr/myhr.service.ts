@@ -1,5 +1,5 @@
 import { PrismaService } from '../prisma/prisma.service';
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import authenticateMyHr from 'src/lib/authenticateMyHr';
 
@@ -72,6 +72,32 @@ export class MyHrService {
     })
 
     return biometrics;
+  }
+
+  async getMyHRBatchStatus(batchID: string) {
+    const batch = await this.prisma.myHRBatch.findUnique({
+      where: {
+        id: batchID,
+      },
+      include: {
+        storeSyncRecord: {
+          include: {
+            store: true
+          }
+        }
+      }
+    });
+
+    if (!batch) {
+      throw new NotFoundException(`MyHR batch ${batchID} not found`);
+    }
+
+    const status = await this.getBiometricUploadStatus(batchID);
+
+    return {
+      ...batch,
+      status,
+    };
   }
 
   private async getBiometricUploadStatus(batchId: string) {
