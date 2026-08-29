@@ -38,11 +38,7 @@ export class MyHrService {
           createdAt: 'desc',
         },
         include: {
-          storeSyncRecord: {
-            include: {
-              store: true,
-            },
-          },
+          biometricRecords: true
         },
       }),
       this.prisma.myHRBatch.count(),
@@ -66,6 +62,16 @@ export class MyHrService {
       totalItems: total,
       totalPages: Math.ceil(total / pageSize),
     };
+  }
+
+  async getBiometricsByBatchId(batchID: string) {
+    const biometrics = this.prisma.biometricRecord.findMany({
+      where: {
+        batchID
+      }
+    })
+
+    return biometrics;
   }
 
   private async getBiometricUploadStatus(batchId: string) {
