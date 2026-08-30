@@ -79,13 +79,6 @@ export class MyHrService {
       where: {
         id: batchID,
       },
-      include: {
-        storeSyncRecord: {
-          include: {
-            store: true
-          }
-        }
-      }
     });
 
     if (!batch) {

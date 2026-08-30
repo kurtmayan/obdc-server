@@ -257,11 +257,6 @@ export class AttendanceService {
       },
       include: {
         attendanceRecord: true,
-        myHRBatches: {
-          include: {
-            biometricRecords: true,
-          },
-        }
       },
     });
 
@@ -285,11 +280,6 @@ export class AttendanceService {
       },
       include: {
         attendanceRecord: true,
-        myHRBatches: {
-          include: {
-            biometricRecords: true
-          }
-        }
       },
     });
 

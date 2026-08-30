@@ -94,12 +94,20 @@ model BiometricRecord {
 
 model MyHRBatch {
   id                String            @id
-  storeSyncRecordID String
   biometricRecords  BiometricRecord[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
 
-  storeSyncRecord   StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+model MyHrSync {
+  id            String   @id @default(cuid(2))
+  lastSyncedAt  DateTime?
+  lastRecordId  String?
+  status        SyncStatus @default(PENDING)
+  totalSynced   Int      @default(0)
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 enum SyncStatus {
@@ -125,7 +133,6 @@ model StoreSyncRecord {
   store            Stores                 @relation(fields: [storesId], references: [id], onDelete: Cascade)
   storesId         String
   attendanceRecord AttendanceRecord[]
-  myHRBatches MyHRBatch[]
   chunks           StoreSyncRecordChunk[]
 
   @@index([storesId, syncDate(sort: Desc)])
