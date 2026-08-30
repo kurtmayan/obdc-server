@@ -110,7 +110,7 @@ export class SchedulerService {
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const year = date.getFullYear();
 
-        return `${day}/${month}/${year}`;
+        return `${month}/${day}/${year}`;
     }
 
     private formatDateTime(date: Date): string {
@@ -120,7 +120,7 @@ export class SchedulerService {
         const hours = String(date.getHours()).padStart(2, '0');
         const minutes = String(date.getMinutes()).padStart(2, '0');
 
-        return `${day}/${month}/${year} ${hours}:${minutes}`;
+        return `${month}/${day}/${year} ${hours}:${minutes}`;
     }
 
     private async insertMyHrPayload(payload: MyHrPayload[]) {
@@ -178,7 +178,7 @@ export class SchedulerService {
                 empid: record.empid,
                 logdt: record.logdt,
                 logtm: record.logtm,
-                logstats: record.logstats === 1,
+                logstats: record.logstats,
                 location: record.location,
                 batchID: batch.id,
             })),

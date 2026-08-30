@@ -82,7 +82,7 @@ model BiometricRecord {
   empid     String
   logdt     String
   logtm     String
-  logstats  Boolean
+  logstats  Int
   location  String
 
   batchID   String
