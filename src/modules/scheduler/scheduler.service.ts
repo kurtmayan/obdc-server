@@ -57,7 +57,7 @@ export class SchedulerService {
                         id: 'asc',
                     },
                 ],
-                take: 1000,
+                take: 10000,
             });
 
             if (attendanceRecords.length === 0) {
