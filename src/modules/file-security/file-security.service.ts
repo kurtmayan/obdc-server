@@ -16,9 +16,9 @@ export class FileSecurityService {
         console.log(keyBase64);
 
         if (!keyBase64) {
-        throw new BadRequestException(
-            'Missing OBDC_ENCRYPTION_KEY environment variable',
-        );
+            throw new BadRequestException(
+                'Missing OBDC_ENCRYPTION_KEY environment variable',
+            );
         }
 
         const key = Buffer.from(keyBase64, 'base64');
@@ -30,7 +30,7 @@ export class FileSecurityService {
         }
 
         if (encryptedBuffer.length <= 28) {
-        throw new BadRequestException('Invalid encrypted file');
+            throw new BadRequestException('Invalid encrypted file');
         }
 
         const nonce = encryptedBuffer.subarray(0, 12);
@@ -40,24 +40,24 @@ export class FileSecurityService {
         const authTag = encryptedData.subarray(encryptedData.length - 16);
 
         try {
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
-        decipher.setAuthTag(authTag);
+            const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+            decipher.setAuthTag(authTag);
 
         return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
         } catch {
-        throw new BadRequestException(
-            'Unable to decrypt file. The file may be invalid, modified, or encrypted with the wrong key.',
-        );
+            throw new BadRequestException(
+                'Unable to decrypt file. The file may be invalid, modified, or encrypted with the wrong key.',
+            );
         }
     }
 
     extractAndVerifySignedExcel(file: Express.Multer.File): Buffer {
         if (!file) {
-        throw new BadRequestException('No file uploaded');
+            throw new BadRequestException('No file uploaded');
         }
 
         if (!file.originalname.toLowerCase().endsWith('.enc')) {
-        throw new BadRequestException(
+            throw new BadRequestException(
             'Please upload the encrypted .enc file from LBDC',
         );
         }
@@ -71,9 +71,9 @@ export class FileSecurityService {
         const signatureEntry = zip.getEntry('attendance_export.xlsx.sig');
 
         if (!excelEntry || !signatureEntry) {
-        throw new BadRequestException(
-            'Invalid ZIP. It must contain attendance_export.xlsx and attendance_export.xlsx.sig',
-        );
+            throw new BadRequestException(
+                'Invalid ZIP. It must contain attendance_export.xlsx and attendance_export.xlsx.sig',
+            );
         }
 
         const excelBuffer = excelEntry.getData();
@@ -83,9 +83,9 @@ export class FileSecurityService {
         const isValid = this.verifyLbdcSignature(excelBuffer, signatureBase64);
 
         if (!isValid) {
-        throw new BadRequestException(
-            'Invalid file signature. The Excel file may have been modified.',
-        );
+            throw new BadRequestException(
+                'Invalid file signature. The Excel file may have been modified.',
+            );
         }
 
         return excelBuffer;
