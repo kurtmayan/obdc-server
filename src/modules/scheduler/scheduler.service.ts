@@ -12,13 +12,15 @@ type MyHrPayload = {
     location: string;
 };
 
+const MYHR_CHUNK_SIZE = 500;
+
 @Injectable()
 export class SchedulerService {
     private readonly logger = new Logger(SchedulerService.name);
 
     constructor(
         private readonly prisma: PrismaService,
-        private readonly configService: ConfigService
+        private readonly configService: ConfigService,
     ) {}
 
     @Cron(CronExpression.EVERY_HOUR)
@@ -26,7 +28,6 @@ export class SchedulerService {
         try {
             this.logger.log('Starting MyHR attendance sync...');
 
-            // 1. Get or create sync record
             let sync = await this.prisma.myHrSync.findFirst();
 
             if (!sync) {
@@ -35,7 +36,6 @@ export class SchedulerService {
                 });
             }
 
-            // 2. Get attendance records after the last synced record
             const attendanceRecords = await this.prisma.attendanceRecord.findMany({
                 where: {
                     createdAt: {
@@ -45,9 +45,9 @@ export class SchedulerService {
                 include: {
                     storeSyncRecords: {
                         include: {
-                            store: true
-                        }
-                    }
+                            store: true,
+                        },
+                    },
                 },
                 orderBy: [
                     {
@@ -69,7 +69,6 @@ export class SchedulerService {
                 `Found ${attendanceRecords.length} attendance records.`,
             );
 
-            // 3. Convert AttendanceRecord → MyHR payload
             const payload: MyHrPayload[] = attendanceRecords.map((record) => ({
                 empid: record.userId,
                 logdt: this.formatDate(record.logDate),
@@ -78,10 +77,24 @@ export class SchedulerService {
                 location: record.storeSyncRecords.store.location,
             }));
 
-            // 4. Send to MyHR
-            await this.insertMyHrPayload(payload);
+            const chunks = this.chunkPayload(payload);
 
-            // 5. Update sync cursor ONLY after successful API request
+            this.logger.log(
+                `Split ${payload.length} records into ${chunks.length} chunks.`,
+            );
+
+            for (const [index, chunk] of chunks.entries()) {
+                this.logger.log(
+                    `Uploading chunk ${index + 1}/${chunks.length} (${chunk.length} records)...`,
+                );
+
+                await this.insertMyHrPayload(chunk);
+
+                this.logger.log(
+                    `Chunk ${index + 1}/${chunks.length} uploaded successfully.`,
+                );
+            }
+
             const lastRecord = attendanceRecords[attendanceRecords.length - 1];
 
             await this.prisma.myHrSync.update({
@@ -105,6 +118,16 @@ export class SchedulerService {
         }
     }
 
+    private chunkPayload(payload: MyHrPayload[]): MyHrPayload[][] {
+        const chunks: MyHrPayload[][] = [];
+
+        for (let i = 0; i < payload.length; i += MYHR_CHUNK_SIZE) {
+            chunks.push(payload.slice(i, i + MYHR_CHUNK_SIZE));
+        }
+
+        return chunks;
+    }
+
     private formatDate(date: Date): string {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -125,14 +148,13 @@ export class SchedulerService {
 
     private async insertMyHrPayload(payload: MyHrPayload[]) {
         if (payload.length === 0) {
-            return {
-                totalInserted: 0,
-                insertedCountBySyncRecord: new Map(),
-            };
+            return;
         }
 
         const token = await authenticateMyHr(this.configService);
-        const apiUrl = `${this.configService.getOrThrow<string>('MYHR_API_URL')}/api/biometric/upload/bulk`;
+        const apiUrl =
+            `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
+            `/api/biometric/upload/bulk`;
 
         const response = await fetch(apiUrl, {
             method: 'POST',
