@@ -23,6 +23,7 @@ export class SchedulerService {
         private readonly configService: ConfigService,
     ) {}
 
+    //@Cron('*/10 * * * * *')
     @Cron(CronExpression.EVERY_HOUR)
     async handleCron() {
         try {
@@ -74,7 +75,7 @@ export class SchedulerService {
                 logdt: this.formatDate(record.logDate),
                 logtm: this.formatDateTime(record.logDate),
                 logstats: record.logType,
-                location: record.storeSyncRecords.store.location,
+                location: record.storeSyncRecords.store.name,
             }));
 
             const chunks = this.chunkPayload(payload);
