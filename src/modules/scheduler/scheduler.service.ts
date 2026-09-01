@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import authenticateMyHr from 'src/lib/authenticateMyHr';
+import { LogStats } from 'src/generated/prisma/enums';
 
 type MyHrPayload = {
     empid: string;
@@ -201,7 +202,7 @@ export class SchedulerService {
                 empid: record.empid,
                 logdt: record.logdt,
                 logtm: record.logtm,
-                logstats: record.logstats,
+                logstats: this.getLogStats(record.logstats),
                 location: record.location,
                 batchID: batch.id,
             })),
@@ -210,5 +211,16 @@ export class SchedulerService {
         this.logger.log(
             `MyHR upload successful. Sent ${payload.length}, saved ${result.count}, batch ${batch.id}`,
         );
+    }
+
+    private getLogStats(value: number): LogStats {
+        switch (value) {
+            case 1:
+            return "TIME_IN";
+            case 2:
+            return "TIME_OUT";
+            default:
+            return "NO_VALUE";
+        }
     }
 }

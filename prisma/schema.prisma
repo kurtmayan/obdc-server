@@ -77,12 +77,18 @@ model AttendanceRecord {
   storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
 }
 
+enum LogStats {
+  TIME_OUT @map("0")
+  TIME_IN @map("1")
+  NO_VALUE @map("2")
+}
+
 model BiometricRecord {
   id        String   @id @default(cuid(2))
   empid     String
   logdt     String
   logtm     String
-  logstats  Int
+  logstats  LogStats
   location  String
 
   batchID   String
