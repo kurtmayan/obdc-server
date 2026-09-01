@@ -1,4 +1,5 @@
 import { CreateStoreSyncRecord } from 'src/modules/sync/dto/create-store-sync-record.dto';
+import { MyHrPayload } from './my-hr';
 
 export interface QueueMessage<TType extends string, TPayload> {
   type: TType;
@@ -24,6 +25,6 @@ export interface SyncChunkMessage {
 }
 
 export type AppQueueMessage =
-  | QueueMessage<'SYNC_MY_HR_CHUNK', SyncChunkMessage>
   | QueueMessage<'SYNC_RECORDS', SyncMessage>
-  | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>;
+  | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>
+  | QueueMessage<'SYNC_MY_HR_CHUNK', SyncChunkMessage>;

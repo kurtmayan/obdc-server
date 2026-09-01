@@ -18,8 +18,12 @@ export class MyHrController {
 
   @Public()
   @Get('sync')
-  async syncToMyHr() {
-    return this.schedulerService.syncAttendanceToMyHr()
+  syncToMyHr() {
+    this.schedulerService.handleCron();
+
+    return {
+      message: 'MyHR attendance synchronization has been triggered successfully.',
+    };
   }
 
   @Get('biometrics/:batchID')

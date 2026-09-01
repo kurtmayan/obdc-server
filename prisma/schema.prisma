@@ -106,14 +106,53 @@ model MyHRBatch {
 }
 
 model MyHrSync {
-  id            String   @id @default(cuid(2))
+  id            String        @id @default(cuid())
   lastSyncedAt  DateTime?
   lastRecordId  String?
-  status        SyncStatus @default(PENDING)
-  totalSynced   Int      @default(0)
-  errorMessage  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  jobs          MyHrSyncJob[]
+}
+
+model MyHrSyncJob {
+  id              String          @id @default(cuid())
+  status          SyncStatus      @default(PENDING)
+  totalRecords    Int             @default(0)
+  insertedRecords Int             @default(0)
+  failedRecords   Int             @default(0)
+  startDate       DateTime?
+  startRecordId   String?
+  endDate         DateTime?
+  endRecordId     String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  myHrSyncId      String
+  myHrSync        MyHrSync        @relation(fields: [myHrSyncId], references: [id], onDelete: Cascade)
+  chunks          MyHrSyncChunk[]
+
+  @@index([myHrSyncId, status])
+}
+
+model MyHrSyncChunk {
+  id              String       @id @default(cuid())
+  status          SyncStatus   @default(PENDING)
+  totalRecords    Int
+  insertedRecords Int          @default(0)
+  failedRecords   Int          @default(0)
+  payload         Json
+  batchId         String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  myHrSyncJobId   String
+  myHrSyncJob     MyHrSyncJob  @relation(fields: [myHrSyncJobId], references: [id], onDelete: Cascade)
+
+  @@index([myHrSyncJobId, status])
 }
 
 enum SyncStatus {

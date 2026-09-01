@@ -1,155 +1,200 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
-import authenticateMyHr from 'src/lib/authenticateMyHr';
-import { LogStats } from 'src/generated/prisma/enums';
-
-type MyHrPayload = {
-    empid: string;
-    logdt: string;
-    logtm: string;
-    logstats: number;
-    location: string;
-};
-
-const MYHR_CHUNK_SIZE = 500;
+import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
+import { MyHrService } from '../myhr/myhr.service';
+import { SyncStatus } from 'src/generated/prisma/enums';
+import { MyHrPayload } from 'src/types/my-hr';
 
 @Injectable()
 export class SchedulerService {
     private readonly logger = new Logger(SchedulerService.name);
+    private readonly batchSize = 10000;
 
     constructor(
         private readonly prisma: PrismaService,
-        private readonly configService: ConfigService,
+        private readonly sqsQueueService: SqsQueueService,
+        private readonly myHrService: MyHrService,
     ) {}
 
-    //@Cron('*/10 * * * * *')
     @Cron(CronExpression.EVERY_HOUR)
     async handleCron() {
-        this.syncAttendanceToMyHr();
-    }
-
-    async syncAttendanceToMyHr() {
         try {
-            this.logger.log('Starting MyHR attendance sync...');
+        this.logger.log('Starting MyHR attendance sync...');
 
-            let sync = await this.prisma.myHrSync.findFirst();
+        const sync = await this.getOrCreateSync();
 
-            if (!sync) {
-                sync = await this.prisma.myHrSync.create({
-                    data: {},
-                });
-            }
+        const activeJob = await this.prisma.myHrSyncJob.findFirst({
+            where: {
+            myHrSyncId: sync.id,
+            status: {
+                in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
+            },
+            },
+        });
 
-            const attendanceRecords =
-                await this.prisma.attendanceRecord.findMany({
-                    where: {
-                        createdAt: {
-                            gt: sync.lastSyncedAt ?? new Date(0),
-                        },
-                    },
-                    include: {
-                        storeSyncRecords: {
-                            include: {
-                                store: true,
-                            },
-                        },
-                    },
-                    orderBy: [
-                        {
-                            createdAt: 'asc',
-                        },
-                        {
-                            id: 'asc',
-                        },
-                    ],
-                    take: 10000,
-                });
-
-            if (attendanceRecords.length === 0) {
-                this.logger.log('No new attendance records to sync.');
-
-                return {
-                    success: true,
-                    message: 'No new attendance records to sync.',
-                    totalRecords: 0,
-                    totalChunks: 0,
-                };
-            }
-
+        if (activeJob) {
             this.logger.log(
-                `Found ${attendanceRecords.length} attendance records.`,
+            `MyHR sync already has an active job: ${activeJob.id}. Skipping.`,
             );
+            return;
+        }
 
-            const payload: MyHrPayload[] = attendanceRecords.map((record) => ({
-                empid: record.userId,
-                logdt: this.formatDate(record.logDate),
-                logtm: this.formatDateTime(record.logDate),
-                logstats: record.logType,
-                location: record.storeSyncRecords.store.name,
-            }));
+        const attendanceRecords = await this.getUnsyncedAttendance(sync);
 
-            const chunks = this.chunkPayload(payload);
+        if (attendanceRecords.length === 0) {
+            this.logger.log('No new attendance records to sync.');
+            return;
+        }
 
-            this.logger.log(
-                `Split ${payload.length} records into ${chunks.length} chunks.`,
-            );
+        this.logger.log(
+            `Found ${attendanceRecords.length} attendance records.`,
+        );
 
-            for (const [index, chunk] of chunks.entries()) {
-                this.logger.log(
-                    `Uploading chunk ${index + 1}/${chunks.length} (${chunk.length} records)...`,
-                );
+        const payload: MyHrPayload[] = attendanceRecords.map((record) => ({
+            empid: record.userId,
+            logdt: this.formatDate(record.logDate),
+            logtm: this.formatDateTime(record.logDate),
+            logstats: record.logType,
+            location: record.storeSyncRecords.store.name,
+        }));
 
-                await this.insertMyHrPayload(chunk);
+        const chunks = this.myHrService.chunkPayload(payload);
 
-                this.logger.log(
-                    `Chunk ${index + 1}/${chunks.length} uploaded successfully.`,
-                );
-            }
+        const firstRecord = attendanceRecords[0];
+        const lastRecord =
+            attendanceRecords[attendanceRecords.length - 1];
 
-            const lastRecord =
-                attendanceRecords[attendanceRecords.length - 1];
+        const job = await this.prisma.myHrSyncJob.create({
+            data: {
+            myHrSyncId: sync.id,
+            status: SyncStatus.PENDING,
+            totalRecords: attendanceRecords.length,
+            startDate: firstRecord.createdAt,
+            startRecordId: firstRecord.id,
+            endDate: lastRecord.createdAt,
+            endRecordId: lastRecord.id,
+            },
+        });
 
-            await this.prisma.myHrSync.update({
-                where: {
-                    id: sync.id,
-                },
+        this.logger.log(
+            `Created MyHR sync job ${job.id} with ${chunks.length} chunks.`,
+        );
+
+        for (const [index, chunk] of chunks.entries()) {
+            const syncChunk = await this.prisma.myHrSyncChunk.create({
                 data: {
-                    lastSyncedAt: lastRecord.createdAt,
-                    lastRecordId: lastRecord.id,
+                    myHrSyncJobId: job.id,
+                    status: SyncStatus.PENDING,
+                    totalRecords: chunk.length,
+                    payload: chunk,
                 },
             });
 
+            await this.sqsQueueService.sendMessage({
+                type: 'SYNC_MY_HR_CHUNK',
+                payload: {
+                    chunkId: syncChunk.id,
+                },
+                createdAt: new Date().toISOString(),
+            });
+
             this.logger.log(
-                `MyHR sync successful. Last synced record: ${lastRecord.id}`,
+            `Queued MyHR chunk ${index + 1}/${chunks.length}: ${syncChunk.id}`,
             );
+        }
 
-            return {
-                success: true,
-                message: 'MyHR attendance sync successful.',
-                totalRecords: attendanceRecords.length,
-                totalChunks: chunks.length,
-                lastRecordId: lastRecord.id,
-            };
+        await this.prisma.myHrSyncJob.update({
+            where: {
+            id: job.id,
+            },
+            data: {
+            status: SyncStatus.PROCESSING,
+            startedAt: new Date(),
+            },
+        });
+
+        this.logger.log(
+            `MyHR sync job ${job.id} queued successfully.`,
+        );
         } catch (error) {
-            this.logger.error(
-                'MyHR attendance sync failed',
-                error instanceof Error ? error.stack : error,
-            );
-
-            throw error;
+        this.logger.error(
+            'MyHR attendance sync scheduling failed',
+            error instanceof Error ? error.stack : String(error),
+        );
         }
     }
 
-    private chunkPayload(payload: MyHrPayload[]): MyHrPayload[][] {
-        const chunks: MyHrPayload[][] = [];
+    private async getOrCreateSync() {
+        const sync = await this.prisma.myHrSync.findFirst();
 
-        for (let i = 0; i < payload.length; i += MYHR_CHUNK_SIZE) {
-            chunks.push(payload.slice(i, i + MYHR_CHUNK_SIZE));
+        if (sync) {
+        return sync;
         }
 
-        return chunks;
+        return this.prisma.myHrSync.create({
+        data: {},
+        });
+    }
+
+    private async getUnsyncedAttendance(sync: {
+        lastSyncedAt: Date | null;
+        lastRecordId: string | null;
+    }) {
+        if (!sync.lastSyncedAt) {
+        return this.prisma.attendanceRecord.findMany({
+            include: {
+            storeSyncRecords: {
+                include: {
+                store: true,
+                },
+            },
+            },
+            orderBy: [
+            {
+                createdAt: 'asc',
+            },
+            {
+                id: 'asc',
+            },
+            ],
+            take: this.batchSize,
+        });
+        }
+
+        return this.prisma.attendanceRecord.findMany({
+        where: {
+            OR: [
+            {
+                createdAt: {
+                gt: sync.lastSyncedAt,
+                },
+            },
+            {
+                createdAt: sync.lastSyncedAt,
+                id: {
+                gt: sync.lastRecordId ?? '',
+                },
+            },
+            ],
+        },
+        include: {
+            storeSyncRecords: {
+            include: {
+                store: true,
+            },
+            },
+        },
+        orderBy: [
+            {
+            createdAt: 'asc',
+            },
+            {
+            id: 'asc',
+            },
+        ],
+        take: this.batchSize,
+        });
     }
 
     private formatDate(date: Date): string {
@@ -168,81 +213,5 @@ export class SchedulerService {
         const minutes = String(date.getMinutes()).padStart(2, '0');
 
         return `${month}/${day}/${year} ${hours}:${minutes}`;
-    }
-
-    private async insertMyHrPayload(payload: MyHrPayload[]) {
-        if (payload.length === 0) {
-            return;
-        }
-
-        const token = await authenticateMyHr(this.configService);
-        const apiUrl =
-            `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
-            `/api/biometric/upload/bulk`;
-
-        const response = await fetch(apiUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(payload),
-        });
-
-        const responseBody = await response.text();
-
-        this.logger.log(`MyHR upload status: ${response.status}`);
-
-        if (!response.ok) {
-            throw new Error(
-                `MyHR endpoint failed: ${response.status} ${response.statusText} - ${responseBody}`,
-            );
-        }
-
-        let responseJson: { batchId?: string };
-
-        try {
-            responseJson = responseBody ? JSON.parse(responseBody) : {};
-        } catch {
-            throw new Error(`MyHR returned invalid JSON: ${responseBody}`);
-        }
-
-        if (!responseJson.batchId) {
-            throw new Error(
-                'MyHR upload succeeded but no batchId was returned.',
-            );
-        }
-
-        const batch = await this.prisma.myHRBatch.create({
-            data: {
-                id: responseJson.batchId,
-            },
-        });
-
-        const result = await this.prisma.biometricRecord.createMany({
-            data: payload.map((record) => ({
-                empid: record.empid,
-                logdt: record.logdt,
-                logtm: record.logtm,
-                logstats: this.getLogStats(record.logstats),
-                location: record.location,
-                batchID: batch.id,
-            })),
-        });
-
-        this.logger.log(
-            `MyHR upload successful. Sent ${payload.length}, saved ${result.count}, batch ${batch.id}`,
-        );
-    }
-
-    private getLogStats(value: number): LogStats {
-        switch (value) {
-            case 1:
-            return "TIME_IN";
-            case 2:
-            return "TIME_OUT";
-            default:
-            return "NO_VALUE";
-        }
     }
 }

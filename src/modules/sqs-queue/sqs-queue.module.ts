@@ -10,9 +10,10 @@ import {
 import { SqsClientProvider } from './sqs.provider';
 import { SqsProcessor } from './sqs.processor';
 import { PrismaService } from '../prisma/prisma.service';
+import { MyHrService } from '../myhr/myhr.service';
 
 @Module({
-  providers: [SqsQueueService, SqsClientProvider, SqsProcessor, PrismaService],
+  providers: [SqsQueueService, SqsClientProvider, SqsProcessor, PrismaService, MyHrService],
   exports: [SqsQueueService],
 })
 export class SqsQueueModule {}
