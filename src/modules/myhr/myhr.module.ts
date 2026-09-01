@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
-import { SyncService } from './sync.service';
-import { SyncController } from './sync.controller';
+import { MyHrService } from './myhr.service';
+import { MyHrController } from './myhr.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueModule } from '../sqs-queue/sqs-queue.module';
 import { FileSecurityModule } from '../file-security/file-security.module';
+import { SchedulerService } from '../scheduler/scheduler.service';
 
 @Module({
   imports: [SqsQueueModule, FileSecurityModule],
-  providers: [SyncService, PrismaService],
-  controllers: [SyncController],
+  controllers: [MyHrController],
+  providers: [MyHrService, PrismaService, SchedulerService],
 })
-export class SyncModule {}
+export class MyhrModule {}

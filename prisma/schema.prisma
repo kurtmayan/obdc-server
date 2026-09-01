@@ -77,6 +77,45 @@ model AttendanceRecord {
   storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
 }
 
+enum LogStats {
+  TIME_OUT @map("0")
+  TIME_IN @map("1")
+  NO_VALUE @map("2")
+}
+
+model BiometricRecord {
+  id        String   @id @default(cuid(2))
+  empid     String
+  logdt     String
+  logtm     String
+  logstats  LogStats
+  location  String
+
+  batchID   String
+  batch     MyHRBatch @relation(fields: [batchID], references: [id])
+
+  @@index([empid])
+  @@index([batchID])
+}
+
+model MyHRBatch {
+  id                String            @id
+  biometricRecords  BiometricRecord[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model MyHrSync {
+  id            String   @id @default(cuid(2))
+  lastSyncedAt  DateTime?
+  lastRecordId  String?
+  status        SyncStatus @default(PENDING)
+  totalSynced   Int      @default(0)
+  errorMessage  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
 enum SyncStatus {
   PENDING
   PROCESSING
