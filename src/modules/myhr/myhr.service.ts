@@ -1,7 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { LogStats, SyncStatus } from 'src/generated/prisma/enums';
+import {
+  LogStats,
+  MyHrRecordSyncStatus,
+  SyncStatus,
+} from 'src/generated/prisma/enums';
 import authenticateMyHr from 'src/lib/authenticateMyHr';
 import { MyHrPayload } from 'src/types/my-hr';
 
@@ -111,8 +115,8 @@ export class MyHrService {
     };
   }
 
-  chunkPayload(payload: MyHrPayload[]): MyHrPayload[][] {
-    const chunks: MyHrPayload[][] = [];
+  chunkPayload<T extends MyHrPayload>(payload: T[]): T[][] {
+    const chunks: T[][] = [];
 
     for (let i = 0; i < payload.length; i += this.chunkSize) {
       chunks.push(payload.slice(i, i + this.chunkSize));
@@ -126,9 +130,6 @@ export class MyHrService {
       where: {
         id: chunkId,
       },
-      include: {
-        myHrSyncJob: true,
-      },
     });
 
     if (!chunk) {
@@ -136,11 +137,40 @@ export class MyHrService {
     }
 
     if (chunk.status === SyncStatus.SUCCESS) {
+      await this.finalizeJob(chunk.myHrSyncJobId);
       return;
     }
 
     if (chunk.status === SyncStatus.FAILED) {
-      throw new Error(`MyHR sync chunk ${chunkId} is already failed`);
+      await this.finalizeJob(chunk.myHrSyncJobId);
+      return;
+    }
+
+    if (chunk.status === SyncStatus.PROCESSING) {
+      const reclaimed = await this.prisma.myHrSyncChunk.updateMany({
+        where: {
+          id: chunkId,
+          status: SyncStatus.PROCESSING,
+          OR: [
+            { startedAt: null },
+            {
+              startedAt: {
+                lt: new Date(
+                  Date.now() - this.getProcessingTimeoutMilliseconds(),
+                ),
+              },
+            },
+          ],
+        },
+        data: {
+          status: SyncStatus.PENDING,
+          startedAt: null,
+        },
+      });
+
+      if (reclaimed.count === 0) {
+        throw new Error(`MyHR sync chunk ${chunkId} is already processing`);
+      }
     }
 
     const claimed = await this.prisma.myHrSyncChunk.updateMany({
@@ -150,6 +180,9 @@ export class MyHrService {
       },
       data: {
         status: SyncStatus.PROCESSING,
+        attemptCount: {
+          increment: 1,
+        },
         startedAt: new Date(),
         completedAt: null,
         errorMessage: null,
@@ -167,36 +200,70 @@ export class MyHrService {
         throw new Error(`MyHR sync chunk not found: ${chunkId}`);
       }
 
-      if (currentChunk.status === SyncStatus.SUCCESS) {
+      if (
+        currentChunk.status === SyncStatus.SUCCESS ||
+        currentChunk.status === SyncStatus.FAILED
+      ) {
+        await this.finalizeJob(chunk.myHrSyncJobId);
         return;
       }
 
-      return;
+      throw new Error(`MyHR sync chunk ${chunkId} is already processing`);
     }
+
+    await this.prisma.myHrAttendanceSync.updateMany({
+      where: {
+        chunkId,
+        status: MyHrRecordSyncStatus.PENDING,
+      },
+      data: {
+        status: MyHrRecordSyncStatus.PROCESSING,
+        attemptCount: { increment: 1 },
+        startedAt: new Date(),
+        errorMessage: null,
+      },
+    });
 
     try {
       const payload = chunk.payload as unknown as MyHrPayload[];
 
       const result = await this.uploadBiometrics(payload);
 
-      await this.prisma.myHrSyncChunk.update({
-        where: {
-          id: chunkId,
-        },
-        data: {
-          status: SyncStatus.SUCCESS,
-          insertedRecords: result.saved,
-          failedRecords: 0,
-          batchId: result.batchId,
-          completedAt: new Date(),
-          errorMessage: null,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.myHrSyncChunk.update({
+          where: {
+            id: chunkId,
+          },
+          data: {
+            status: SyncStatus.SUCCESS,
+            insertedRecords: result.saved,
+            failedRecords: 0,
+            batchId: result.batchId,
+            completedAt: new Date(),
+            errorMessage: null,
+          },
+        });
+
+        await tx.myHrAttendanceSync.updateMany({
+          where: {
+            chunkId,
+            status: MyHrRecordSyncStatus.PROCESSING,
+          },
+          data: {
+            status: MyHrRecordSyncStatus.SYNCED,
+            batchId: result.batchId,
+            syncedAt: new Date(),
+            errorMessage: null,
+          },
+        });
       });
 
       await this.finalizeJob(chunk.myHrSyncJobId);
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+      const isFinalAttempt =
+        chunk.attemptCount + 1 >= this.getMaxChunkAttempts();
 
       await this.prisma.myHrSyncChunk.updateMany({
         where: {
@@ -204,26 +271,56 @@ export class MyHrService {
           status: SyncStatus.PROCESSING,
         },
         data: {
-          status: SyncStatus.FAILED,
-          failedRecords: chunk.totalRecords,
-          completedAt: new Date(),
+          status: isFinalAttempt ? SyncStatus.FAILED : SyncStatus.PENDING,
+          failedRecords: isFinalAttempt ? chunk.totalRecords : 0,
+          completedAt: isFinalAttempt ? new Date() : null,
           errorMessage,
         },
       });
 
-      await this.prisma.myHrSyncJob.update({
+      await this.prisma.myHrAttendanceSync.updateMany({
         where: {
-          id: chunk.myHrSyncJobId,
+          chunkId,
+          status: MyHrRecordSyncStatus.PROCESSING,
         },
         data: {
-          status: SyncStatus.FAILED,
+          status: isFinalAttempt
+            ? MyHrRecordSyncStatus.FAILED
+            : MyHrRecordSyncStatus.PENDING,
           errorMessage,
-          completedAt: new Date(),
+          startedAt: null,
         },
       });
+
+      if (isFinalAttempt) {
+        await this.finalizeJob(chunk.myHrSyncJobId);
+      }
 
       throw error;
     }
+  }
+
+  private getMaxChunkAttempts(): number {
+    return this.getPositiveIntegerConfig('MYHR_MAX_CHUNK_ATTEMPTS', 3);
+  }
+
+  private getProcessingTimeoutMilliseconds(): number {
+    const sqsVisibilityTimeoutSeconds = this.getPositiveIntegerConfig(
+      'AWS_SQS_VISIBILITY_TIMEOUT_SECONDS',
+      300,
+    );
+    const timeoutSeconds = this.getPositiveIntegerConfig(
+      'MYHR_CHUNK_PROCESSING_TIMEOUT_SECONDS',
+      sqsVisibilityTimeoutSeconds + 60,
+    );
+
+    return timeoutSeconds * 1000;
+  }
+
+  private getPositiveIntegerConfig(key: string, fallback: number): number {
+    const value = Number(this.configService.get<string>(key));
+
+    return Number.isInteger(value) && value > 0 ? value : fallback;
   }
 
   private async finalizeJob(jobId: string): Promise<void> {
@@ -295,28 +392,10 @@ export class MyHrService {
           errorMessage: null,
         },
       });
-
-      if (job.endDate && job.endRecordId) {
-        await tx.myHrSync.update({
-          where: {
-            id: job.myHrSyncId,
-          },
-          data: {
-            lastSyncedAt: job.endDate,
-            lastRecordId: job.endRecordId,
-          },
-        });
-      }
     });
   }
 
-  async getMyHrRecord({
-    page,
-    pageSize,
-  }: {
-    page: number;
-    pageSize: number;
-  }) {
+  async getMyHrRecord({ page, pageSize }: { page: number; pageSize: number }) {
     const skip = (page - 1) * pageSize;
 
     const [batches, total] = await Promise.all([

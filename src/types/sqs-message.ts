@@ -1,5 +1,4 @@
 import { CreateStoreSyncRecord } from 'src/modules/sync/dto/create-store-sync-record.dto';
-import { MyHrPayload } from './my-hr';
 
 export interface QueueMessage<TType extends string, TPayload> {
   type: TType;
