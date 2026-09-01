@@ -27,6 +27,10 @@ export class SchedulerService {
     //@Cron('*/10 * * * * *')
     @Cron(CronExpression.EVERY_HOUR)
     async handleCron() {
+        this.syncAttendanceToMyHr();
+    }
+
+    async syncAttendanceToMyHr() {
         try {
             this.logger.log('Starting MyHR attendance sync...');
 
@@ -38,33 +42,40 @@ export class SchedulerService {
                 });
             }
 
-            const attendanceRecords = await this.prisma.attendanceRecord.findMany({
-                where: {
-                    createdAt: {
-                        gt: sync.lastSyncedAt ?? new Date(0),
-                    },
-                },
-                include: {
-                    storeSyncRecords: {
-                        include: {
-                            store: true,
+            const attendanceRecords =
+                await this.prisma.attendanceRecord.findMany({
+                    where: {
+                        createdAt: {
+                            gt: sync.lastSyncedAt ?? new Date(0),
                         },
                     },
-                },
-                orderBy: [
-                    {
-                        createdAt: 'asc',
+                    include: {
+                        storeSyncRecords: {
+                            include: {
+                                store: true,
+                            },
+                        },
                     },
-                    {
-                        id: 'asc',
-                    },
-                ],
-                take: 10000,
-            });
+                    orderBy: [
+                        {
+                            createdAt: 'asc',
+                        },
+                        {
+                            id: 'asc',
+                        },
+                    ],
+                    take: 10000,
+                });
 
             if (attendanceRecords.length === 0) {
                 this.logger.log('No new attendance records to sync.');
-                return;
+
+                return {
+                    success: true,
+                    message: 'No new attendance records to sync.',
+                    totalRecords: 0,
+                    totalChunks: 0,
+                };
             }
 
             this.logger.log(
@@ -97,7 +108,8 @@ export class SchedulerService {
                 );
             }
 
-            const lastRecord = attendanceRecords[attendanceRecords.length - 1];
+            const lastRecord =
+                attendanceRecords[attendanceRecords.length - 1];
 
             await this.prisma.myHrSync.update({
                 where: {
@@ -112,11 +124,21 @@ export class SchedulerService {
             this.logger.log(
                 `MyHR sync successful. Last synced record: ${lastRecord.id}`,
             );
+
+            return {
+                success: true,
+                message: 'MyHR attendance sync successful.',
+                totalRecords: attendanceRecords.length,
+                totalChunks: chunks.length,
+                lastRecordId: lastRecord.id,
+            };
         } catch (error) {
             this.logger.error(
                 'MyHR attendance sync failed',
                 error instanceof Error ? error.stack : error,
             );
+
+            throw error;
         }
     }
 
