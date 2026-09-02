@@ -15,19 +15,20 @@ type CreateSyncJobResult =
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
-  private readonly batchSize = 10000;
   private readonly jobPollIntervalMs = 5000;
   private readonly jobWaitTimeoutMs = 30 * 60 * 1000;
   private readonly sqsMaxAttempts = 3;
   private readonly sqsRetryDelayMs = 2000;
-
+  
   constructor(
     private readonly prisma: PrismaService,
     private readonly sqsQueueService: SqsQueueService,
     private readonly myHrService: MyHrService,
   ) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
+
+  @Cron('*/10 * * * * *')
+  //@Cron(CronExpression.EVERY_HOUR)
   async handleCron() {
     try {
       this.logger.log('Starting MyHR attendance sync...');
@@ -108,10 +109,6 @@ export class SchedulerService {
 
   private async createSyncJob(): Promise<CreateSyncJobResult> {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
-        SELECT pg_advisory_xact_lock(hashtext('myhr-attendance-scheduler'))
-      `;
-
       const sync = await this.getOrCreateSync(tx);
 
       const activeJob = await tx.myHrSyncJob.findFirst({
@@ -318,7 +315,6 @@ export class SchedulerService {
         },
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      take: this.batchSize,
     });
   }
 
