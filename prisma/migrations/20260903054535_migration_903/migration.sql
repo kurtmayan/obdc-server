@@ -104,6 +104,9 @@ CREATE INDEX "BiometricRecord_batchID_idx" ON "BiometricRecord"("batchID");
 CREATE INDEX "MyHrSyncJob_myHrSyncId_status_idx" ON "MyHrSyncJob"("myHrSyncId", "status");
 
 -- CreateIndex
+CREATE INDEX "MyHrSyncJob_status_startedAt_idx" ON "MyHrSyncJob"("status", "startedAt");
+
+-- CreateIndex
 CREATE INDEX "MyHrSyncChunk_myHrSyncJobId_status_idx" ON "MyHrSyncChunk"("myHrSyncJobId", "status");
 
 -- CreateIndex
@@ -117,6 +120,9 @@ CREATE INDEX "MyHrAttendanceSync_chunkId_status_idx" ON "MyHrAttendanceSync"("ch
 
 -- CreateIndex
 CREATE INDEX "MyHrAttendanceSync_batchId_idx" ON "MyHrAttendanceSync"("batchId");
+
+-- CreateIndex
+CREATE INDEX "AttendanceRecord_createdAt_id_idx" ON "AttendanceRecord"("createdAt", "id");
 
 -- AddForeignKey
 ALTER TABLE "BiometricRecord" ADD CONSTRAINT "BiometricRecord_batchID_fkey" FOREIGN KEY ("batchID") REFERENCES "MyHRBatch"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
