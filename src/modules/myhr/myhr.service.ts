@@ -9,9 +9,11 @@ import {
 } from 'src/generated/prisma/enums';
 import authenticateMyHr from 'src/lib/authenticateMyHr';
 import { MyHrPayload, MyHrSyncPayload } from 'src/types/my-hr';
+import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from './myhr-sync-eligibility';
 
-type TransactionClient =
-  Parameters<Parameters<PrismaService['$transaction']>[0]>[0];
+type TransactionClient = Parameters<
+  Parameters<PrismaService['$transaction']>[0]
+>[0];
 
 type CreateSyncJobResult =
   | {
@@ -186,7 +188,8 @@ export class MyHrService {
 
       this.logger.log(`MyHR sync job ${job.id} queued successfully.`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
       this.logger.error(
         `Failed to queue MyHR sync job ${job.id}: ${errorMessage}`,
@@ -297,7 +300,8 @@ export class MyHrService {
         totalRecords: attendanceRecords.length,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
       await this.markJobAsFailed(
         job.id,
@@ -663,22 +667,7 @@ export class MyHrService {
 
   private async getUnsyncedAttendance(tx: TransactionClient) {
     return tx.attendanceRecord.findMany({
-      where: {
-        OR: [
-          {
-            myHrSyncRecord: {
-              is: null,
-            },
-          },
-          {
-            myHrSyncRecord: {
-              is: {
-                status: MyHrRecordSyncStatus.FAILED,
-              },
-            },
-          },
-        ],
-      },
+      where: MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
       include: {
         storeSyncRecords: {
           include: {
@@ -699,7 +688,10 @@ export class MyHrService {
   }
 
   private getMaxRecordsPerJob(): number {
-    return this.getPositiveIntegerConfig('MYHR_SYNC_MAX_RECORDS_PER_JOB', 10_000);
+    return this.getPositiveIntegerConfig(
+      'MYHR_SYNC_MAX_RECORDS_PER_JOB',
+      10_000,
+    );
   }
 
   private sleep(ms: number): Promise<void> {
