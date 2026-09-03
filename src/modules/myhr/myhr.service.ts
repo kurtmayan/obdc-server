@@ -15,6 +15,8 @@ type TransactionClient = Parameters<
   Parameters<PrismaService['$transaction']>[0]
 >[0];
 
+type AttendanceQueryClient = Pick<TransactionClient, 'attendanceRecord'>;
+
 type CreateSyncJobResult =
   | {
       type: 'ACTIVE_JOB';
@@ -242,19 +244,11 @@ export class MyHrService {
           };
         }
 
-        const firstRecord = attendanceRecords[0];
-        const lastRecord = attendanceRecords[attendanceRecords.length - 1];
-
         const job = await tx.myHrSyncJob.create({
           data: {
             myHrSyncId: sync.id,
             status: SyncStatus.PROCESSING,
             startedAt: new Date(),
-            totalRecords: attendanceRecords.length,
-            startDate: firstRecord.createdAt,
-            startRecordId: firstRecord.id,
-            endDate: lastRecord.createdAt,
-            endRecordId: lastRecord.id,
           },
           select: {
             id: true,
@@ -280,31 +274,53 @@ export class MyHrService {
       return initialResult;
     }
 
-    const { job, attendanceRecords } = initialResult;
+    const { job } = initialResult;
 
     try {
-      const payload: MyHrSyncPayload[] = attendanceRecords.map((record) =>
-        this.buildPayload(record),
-      );
-
-      const payloadChunks = this.chunkPayload(payload);
       const chunks: { id: string }[] = [];
+      let attendanceRecords = initialResult.attendanceRecords;
+      const firstRecord = attendanceRecords[0];
+      let lastRecord = firstRecord;
+      let totalRecords = 0;
 
-      for (let index = 0; index < payloadChunks.length; index++) {
-        const chunk = await this.createChunk(job.id, payloadChunks[index]);
+      while (attendanceRecords.length > 0) {
+        const payload: MyHrSyncPayload[] = attendanceRecords.map((record) =>
+          this.buildPayload(record),
+        );
+        const chunk = await this.createChunk(job.id, payload);
 
         chunks.push(chunk);
+        totalRecords += attendanceRecords.length;
+        lastRecord = attendanceRecords[attendanceRecords.length - 1];
 
         this.logger.log(
-          `Created MyHR chunk ${index + 1}/${payloadChunks.length}: ${chunk.id}`,
+          `Created MyHR chunk ${chunks.length}: ${chunk.id}`,
+        );
+
+        attendanceRecords = await this.getUnsyncedAttendance(
+          this.prisma,
+          triggeredAt,
         );
       }
+
+      await this.prisma.myHrSyncJob.update({
+        where: {
+          id: job.id,
+        },
+        data: {
+          totalRecords,
+          startDate: firstRecord.createdAt,
+          startRecordId: firstRecord.id,
+          endDate: lastRecord.createdAt,
+          endRecordId: lastRecord.id,
+        },
+      });
 
       return {
         type: 'CREATED',
         job,
         chunks,
-        totalRecords: attendanceRecords.length,
+        totalRecords,
       };
     } catch (error) {
       const errorMessage =
@@ -673,10 +689,10 @@ export class MyHrService {
   }
 
   private async getUnsyncedAttendance(
-    tx: TransactionClient,
+    client: AttendanceQueryClient,
     triggeredAt: Date,
   ) {
-    return tx.attendanceRecord.findMany({
+    return client.attendanceRecord.findMany({
       where: {
         AND: [
           MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
@@ -687,10 +703,19 @@ export class MyHrService {
           },
         ],
       },
-      include: {
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        logDate: true,
+        logType: true,
         storeSyncRecords: {
-          include: {
-            store: true,
+          select: {
+            store: {
+              select: {
+                name: true,
+              },
+            },
           },
         },
       },
@@ -702,6 +727,7 @@ export class MyHrService {
           id: 'asc',
         },
       ],
+      take: this.getChunkSize(),
     });
   }
 
