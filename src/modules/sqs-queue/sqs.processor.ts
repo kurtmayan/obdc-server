@@ -147,6 +147,10 @@ export class SqsProcessor
         await this.processSyncRecordChunk(message.payload);
         return;
 
+      case 'SYNC_MY_HR_ATTENDANCE':
+        await this.myHrService.scheduleAttendanceSync();
+        return;
+
       case 'SYNC_MY_HR_CHUNK' :
         await this.myHrService.processChunk(message.payload.chunkId);
         return;
@@ -704,6 +708,13 @@ export class SqsProcessor
     }
 
     switch (message.type) {
+      case 'SYNC_MY_HR_ATTENDANCE':
+        return (
+          !!message.payload &&
+          typeof message.payload === 'object' &&
+          !Array.isArray(message.payload)
+        );
+
       case 'SYNC_MY_HR_CHUNK':
       case 'SYNC_RECORD_CHUNK': {
         const payload = message.payload as Record<string, unknown>;

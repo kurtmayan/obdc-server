@@ -24,6 +24,7 @@ export interface SyncChunkMessage {
 }
 
 export type AppQueueMessage =
+  | QueueMessage<'SYNC_MY_HR_ATTENDANCE', Record<string, never>>
   | QueueMessage<'SYNC_RECORDS', SyncMessage>
   | QueueMessage<'SYNC_RECORD_CHUNK', SyncChunkMessage>
   | QueueMessage<'SYNC_MY_HR_CHUNK', SyncChunkMessage>;

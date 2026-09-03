@@ -2,13 +2,13 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 import { MyHrService } from './myhr.service';
 import { GetMyHRRecordDto } from './dto/get-my-hr-record.dto';
 import { Public } from '../auth/auth.decorator';
-import { SchedulerService } from '../scheduler/scheduler.service';
+import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 
 @Controller('myhr')
 export class MyHrController {
   constructor(
     private readonly service: MyHrService,
-    private readonly schedulerService: SchedulerService
+    private readonly sqsQueueService: SqsQueueService,
   ) {}
 
   @Get()
@@ -18,11 +18,15 @@ export class MyHrController {
 
   @Public()
   @Get('sync')
-  syncToMyHr() {
-    this.schedulerService.handleCron();
+  async syncToMyHr() {
+    await this.sqsQueueService.sendMessage({
+      type: 'SYNC_MY_HR_ATTENDANCE',
+      payload: {},
+      createdAt: new Date().toISOString(),
+    });
 
     return {
-      message: 'MyHR attendance synchronization has been triggered successfully.',
+      message: 'MyHR attendance synchronization has been queued successfully.',
     };
   }
 

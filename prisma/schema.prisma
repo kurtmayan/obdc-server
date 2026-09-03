@@ -76,6 +76,8 @@ model AttendanceRecord {
   storeSyncRecordID String
   storeSyncRecords  StoreSyncRecord     @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
   myHrSyncRecord    MyHrAttendanceSync?
+
+  @@index([createdAt, id])
 }
 
 enum LogStats {
@@ -134,6 +136,7 @@ model MyHrSyncJob {
   chunks          MyHrSyncChunk[]
 
   @@index([myHrSyncId, status])
+  @@index([status, startedAt])
 }
 
 model MyHrSyncChunk {
