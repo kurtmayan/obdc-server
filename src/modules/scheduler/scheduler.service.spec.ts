@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { MyHrRecordSyncStatus } from 'src/generated/prisma/enums';
 import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from '../myhr/myhr-sync-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
@@ -40,22 +39,11 @@ describe('SchedulerService', () => {
     );
   });
 
-  it('uses the shared eligibility rule for records that are new or failed', () => {
+  it('only considers records without a MyHR sync record eligible', () => {
     expect(MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE).toEqual({
-      OR: [
-        {
-          myHrSyncRecord: {
-            is: null,
-          },
-        },
-        {
-          myHrSyncRecord: {
-            is: {
-              status: MyHrRecordSyncStatus.FAILED,
-            },
-          },
-        },
-      ],
+      myHrSyncRecord: {
+        is: null,
+      },
     });
   });
 
