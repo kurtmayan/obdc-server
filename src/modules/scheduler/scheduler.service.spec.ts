@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { MyHrRecordSyncStatus } from 'src/generated/prisma/enums';
 import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from '../myhr/myhr-sync-eligibility';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
@@ -40,22 +39,11 @@ describe('SchedulerService', () => {
     );
   });
 
-  it('uses the shared eligibility rule for records that are new or failed', () => {
+  it('only considers records without a MyHR sync record eligible', () => {
     expect(MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE).toEqual({
-      OR: [
-        {
-          myHrSyncRecord: {
-            is: null,
-          },
-        },
-        {
-          myHrSyncRecord: {
-            is: {
-              status: MyHrRecordSyncStatus.FAILED,
-            },
-          },
-        },
-      ],
+      myHrSyncRecord: {
+        is: null,
+      },
     });
   });
 
@@ -65,15 +53,26 @@ describe('SchedulerService', () => {
 
     await expect(service.queueMyHrAttendanceSync()).resolves.toBe(true);
 
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    const queuedMessage = sendMessage.mock.calls[0][0];
+    const triggeredAt = new Date(queuedMessage.createdAt);
+
     expect(findFirst).toHaveBeenCalledWith({
-      where: MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+      where: {
+        AND: [
+          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          {
+            createdAt: {
+              lte: triggeredAt,
+            },
+          },
+        ],
+      },
       select: {
         id: true,
       },
     });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-
-    const queuedMessage = sendMessage.mock.calls[0][0];
 
     expect(queuedMessage.type).toBe('SYNC_MY_HR_ATTENDANCE');
     expect(queuedMessage.payload).toEqual({});

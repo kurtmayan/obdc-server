@@ -35,11 +35,6 @@ type SyncInsertResult = {
   insertedCountBySyncRecord: Map<string, number>;
 };
 
-type LockedStoreSyncRecord = {
-  id: string;
-  status: SyncStatus;
-};
-
 @Injectable()
 export class SqsProcessor
   implements OnApplicationBootstrap, OnApplicationShutdown
@@ -55,7 +50,7 @@ export class SqsProcessor
     private readonly sqsClient: SQSClient,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly myHrService: MyHrService
+    private readonly myHrService: MyHrService,
   ) {
     this.queueUrl = this.configService.getOrThrow<string>('AWS_SQS_QUEUE_URL');
     this.visibilityTimeoutSeconds = this.getVisibilityTimeoutSeconds();
@@ -148,10 +143,12 @@ export class SqsProcessor
         return;
 
       case 'SYNC_MY_HR_ATTENDANCE':
-        await this.myHrService.scheduleAttendanceSync();
+        await this.myHrService.scheduleAttendanceSync(
+          new Date(message.createdAt),
+        );
         return;
 
-      case 'SYNC_MY_HR_CHUNK' :
+      case 'SYNC_MY_HR_CHUNK':
         await this.myHrService.processChunk(message.payload.chunkId);
         return;
 
@@ -355,9 +352,7 @@ export class SqsProcessor
       await this.prisma.storeSyncRecord.updateMany({
         where: {
           id: chunk.storeSyncRecordID,
-          status: {
-            notIn: [SyncStatus.SUCCESS, SyncStatus.FAILED],
-          },
+          status: SyncStatus.PENDING,
         },
         data: {
           status: SyncStatus.PROCESSING,
@@ -601,101 +596,75 @@ export class SqsProcessor
   private async finalizeStoreSyncRecord(
     storeSyncRecordID: string,
   ): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      const lockedRecords = await tx.$queryRaw<LockedStoreSyncRecord[]>`
-        SELECT id, status
-        FROM "StoreSyncRecord"
-        WHERE id = ${storeSyncRecordID}
-        FOR UPDATE
-      `;
-
-      const lockedRecord = lockedRecords[0];
-
-      if (!lockedRecord) {
-        throw new Error(`Store sync record not found: ${storeSyncRecordID}`);
-      }
-
-      const [failedChunk, incompleteChunks, aggregate] = await Promise.all([
-        tx.storeSyncRecordChunk.findFirst({
-          where: {
-            storeSyncRecordID,
-            status: SyncStatus.FAILED,
-          },
-          select: {
-            errorMessage: true,
-          },
-        }),
-        tx.storeSyncRecordChunk.count({
-          where: {
-            storeSyncRecordID,
-            status: {
-              in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
-            },
-          },
-        }),
-        tx.storeSyncRecordChunk.aggregate({
-          where: {
-            storeSyncRecordID,
-          },
-          _sum: {
-            insertedRecords: true,
-            failedRecords: true,
-          },
-        }),
-      ]);
-
-      if (failedChunk) {
-        await tx.storeSyncRecord.update({
-          where: {
-            id: storeSyncRecordID,
-          },
-          data: {
-            status: SyncStatus.FAILED,
-            completedAt: new Date(),
-            insertedRecords: aggregate._sum.insertedRecords ?? 0,
-            failedRecords: aggregate._sum.failedRecords ?? 0,
-            errorMessage: failedChunk.errorMessage,
-          },
-        });
-        return;
-      }
-
-      if (incompleteChunks > 0) {
-        if (
-          lockedRecord.status === SyncStatus.SUCCESS ||
-          lockedRecord.status === SyncStatus.FAILED
-        ) {
-          return;
-        }
-
-        await tx.storeSyncRecord.update({
-          where: {
-            id: storeSyncRecordID,
-          },
-          data: {
-            status: SyncStatus.PROCESSING,
-            insertedRecords: aggregate._sum.insertedRecords ?? 0,
-            failedRecords: aggregate._sum.failedRecords ?? 0,
-            completedAt: null,
-            errorMessage: null,
-          },
-        });
-        return;
-      }
-
-      await tx.storeSyncRecord.update({
-        where: {
-          id: storeSyncRecordID,
-        },
-        data: {
-          status: SyncStatus.SUCCESS,
-          completedAt: new Date(),
-          insertedRecords: aggregate._sum.insertedRecords ?? 0,
-          failedRecords: aggregate._sum.failedRecords ?? 0,
-          errorMessage: null,
-        },
-      });
-    });
+    await this.prisma.$executeRaw`
+      WITH "chunkSummary" AS (
+        SELECT
+          COUNT(*)::INTEGER AS "chunkCount",
+          COUNT(*) FILTER (
+            WHERE chunk.status <> 'SUCCESS'
+          )::INTEGER AS "nonSuccessCount",
+          COUNT(*) FILTER (
+            WHERE chunk.status = 'FAILED'
+          )::INTEGER AS "failedCount",
+          COALESCE(SUM(chunk."insertedRecords"), 0)::INTEGER AS "insertedRecords",
+          COALESCE(SUM(chunk."failedRecords"), 0)::INTEGER AS "failedRecords"
+        FROM "StoreSyncRecordChunk" AS chunk
+        WHERE chunk."storeSyncRecordID" = ${storeSyncRecordID}
+      ),
+      "firstFailedChunk" AS (
+        SELECT chunk."errorMessage"
+        FROM "StoreSyncRecordChunk" AS chunk
+        WHERE chunk."storeSyncRecordID" = ${storeSyncRecordID}
+          AND chunk.status = 'FAILED'
+        ORDER BY chunk."chunkIndex" ASC
+        LIMIT 1
+      )
+      UPDATE "StoreSyncRecord" AS record
+      SET
+        status = CASE
+          WHEN summary."failedCount" > 0 THEN 'FAILED'::"SyncStatus"
+          WHEN summary."nonSuccessCount" = 0 THEN 'SUCCESS'::"SyncStatus"
+          ELSE 'PROCESSING'::"SyncStatus"
+        END,
+        "insertedRecords" = summary."insertedRecords",
+        "failedRecords" = summary."failedRecords",
+        "completedAt" = CASE
+          WHEN summary."failedCount" > 0 THEN
+            CASE
+              WHEN record.status = 'FAILED' THEN record."completedAt"
+              ELSE CURRENT_TIMESTAMP
+            END
+          WHEN summary."nonSuccessCount" = 0 THEN CURRENT_TIMESTAMP
+          ELSE NULL
+        END,
+        "errorMessage" = CASE
+          WHEN summary."failedCount" > 0 THEN
+            CASE
+              WHEN record.status = 'FAILED' THEN record."errorMessage"
+              ELSE failed."errorMessage"
+            END
+          ELSE NULL
+        END
+      FROM "chunkSummary" AS summary
+      LEFT JOIN "firstFailedChunk" AS failed ON TRUE
+      WHERE record.id = ${storeSyncRecordID}
+        AND summary."chunkCount" > 0
+        AND (
+          (
+            summary."failedCount" > 0
+            AND record.status <> 'SUCCESS'
+          )
+          OR (
+            summary."failedCount" = 0
+            AND summary."nonSuccessCount" > 0
+            AND record.status IN ('PENDING', 'PROCESSING')
+          )
+          OR (
+            summary."nonSuccessCount" = 0
+            AND record.status = 'PROCESSING'
+          )
+        )
+    `;
   }
 
   private isAppQueueMessage(value: unknown): value is AppQueueMessage {

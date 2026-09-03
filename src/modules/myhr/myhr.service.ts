@@ -44,7 +44,6 @@ export type MyHrUploadResult = {
 export class MyHrService {
   private readonly logger = new Logger(MyHrService.name);
   private myHrToken: string | null = null;
-  private readonly chunkSize = 500;
   private readonly sqsMaxAttempts = 3;
   private readonly sqsRetryDelayMs = 2_000;
 
@@ -146,18 +145,23 @@ export class MyHrService {
 
   chunkPayload<T extends MyHrPayload>(payload: T[]): T[][] {
     const chunks: T[][] = [];
+    const chunkSize = this.getChunkSize();
 
-    for (let i = 0; i < payload.length; i += this.chunkSize) {
-      chunks.push(payload.slice(i, i + this.chunkSize));
+    for (let i = 0; i < payload.length; i += chunkSize) {
+      chunks.push(payload.slice(i, i + chunkSize));
     }
 
     return chunks;
   }
 
-  async scheduleAttendanceSync(): Promise<void> {
+  async scheduleAttendanceSync(triggeredAt: Date): Promise<void> {
+    if (Number.isNaN(triggeredAt.getTime())) {
+      throw new Error('Invalid MyHR attendance sync trigger timestamp');
+    }
+
     this.logger.log('Starting queued MyHR attendance sync scheduling...');
 
-    const scheduleResult = await this.createSyncJob();
+    const scheduleResult = await this.createSyncJob(triggeredAt);
 
     if (scheduleResult.type === 'ACTIVE_JOB') {
       this.logger.log(
@@ -199,7 +203,7 @@ export class MyHrService {
     }
   }
 
-  private async createSyncJob(): Promise<CreateSyncJobResult> {
+  private async createSyncJob(triggeredAt: Date): Promise<CreateSyncJobResult> {
     const initialResult = await this.prisma.$transaction(
       async (tx) => {
         const sync = await this.getOrCreateSync(tx);
@@ -227,7 +231,10 @@ export class MyHrService {
           };
         }
 
-        const attendanceRecords = await this.getUnsyncedAttendance(tx);
+        const attendanceRecords = await this.getUnsyncedAttendance(
+          tx,
+          triggeredAt,
+        );
 
         if (attendanceRecords.length === 0) {
           return {
@@ -665,9 +672,21 @@ export class MyHrService {
     });
   }
 
-  private async getUnsyncedAttendance(tx: TransactionClient) {
+  private async getUnsyncedAttendance(
+    tx: TransactionClient,
+    triggeredAt: Date,
+  ) {
     return tx.attendanceRecord.findMany({
-      where: MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+      where: {
+        AND: [
+          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          {
+            createdAt: {
+              lte: triggeredAt,
+            },
+          },
+        ],
+      },
       include: {
         storeSyncRecords: {
           include: {
@@ -683,15 +702,11 @@ export class MyHrService {
           id: 'asc',
         },
       ],
-      take: this.getMaxRecordsPerJob(),
     });
   }
 
-  private getMaxRecordsPerJob(): number {
-    return this.getPositiveIntegerConfig(
-      'MYHR_SYNC_MAX_RECORDS_PER_JOB',
-      10_000,
-    );
+  private getChunkSize(): number {
+    return this.getPositiveIntegerConfig('MYHR_SYNC_CHUNK_SIZE', 500);
   }
 
   private sleep(ms: number): Promise<void> {

@@ -20,8 +20,18 @@ export class SchedulerService {
   }
 
   async queueMyHrAttendanceSync(): Promise<boolean> {
+    const triggeredAt = new Date();
     const attendanceRecord = await this.prisma.attendanceRecord.findFirst({
-      where: MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+      where: {
+        AND: [
+          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          {
+            createdAt: {
+              lte: triggeredAt,
+            },
+          },
+        ],
+      },
       select: {
         id: true,
       },
@@ -35,7 +45,7 @@ export class SchedulerService {
     await this.sqsQueueService.sendMessage({
       type: 'SYNC_MY_HR_ATTENDANCE',
       payload: {},
-      createdAt: new Date().toISOString(),
+      createdAt: triggeredAt.toISOString(),
     });
 
     this.logger.log('Queued MyHR attendance sync trigger.');
