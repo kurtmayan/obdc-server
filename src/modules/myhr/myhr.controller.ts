@@ -8,29 +8,34 @@ import { SchedulerService } from '../scheduler/scheduler.service';
 export class MyHrController {
   constructor(
     private readonly service: MyHrService,
-    private readonly schedulerService: SchedulerService
+    private readonly schedulerService: SchedulerService,
   ) {}
 
   @Get()
   getMyHRRecords(@Query() query: GetMyHRRecordDto) {
-    return this.service.getMyHrRecord(query)
+    return this.service.getMyHrRecord(query);
   }
 
   @Public()
   @Get('sync')
   async syncToMyHr() {
-    return this.schedulerService.syncAttendanceToMyHr()
+    const queued = await this.schedulerService.queueMyHrAttendanceSync();
+
+    return {
+      queued,
+      message: queued
+        ? 'MyHR attendance synchronization has been queued successfully.'
+        : 'No eligible attendance records to sync to MyHR.',
+    };
   }
 
   @Get('biometrics/:batchID')
   getBiometricRecords(@Param('batchID') batchID: string) {
-    return this.service.getBiometricsByBatchId(batchID)
+    return this.service.getBiometricsByBatchId(batchID);
   }
 
   @Get('status/:batchID')
   getBatchStatus(@Param('batchID') batchID: string) {
-    return this.service.getMyHRBatchStatus(batchID)
+    return this.service.getMyHRBatchStatus(batchID);
   }
-
 }
-

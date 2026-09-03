@@ -23,6 +23,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
+import { MyHrService } from '../myhr/myhr.service';
 
 type QueuedSyncRecord = {
   id: string;
@@ -54,6 +55,7 @@ export class SqsProcessor
     private readonly sqsClient: SQSClient,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly myHrService: MyHrService
   ) {
     this.queueUrl = this.configService.getOrThrow<string>('AWS_SQS_QUEUE_URL');
     this.visibilityTimeoutSeconds = this.getVisibilityTimeoutSeconds();
@@ -143,6 +145,14 @@ export class SqsProcessor
 
       case 'SYNC_RECORD_CHUNK':
         await this.processSyncRecordChunk(message.payload);
+        return;
+
+      case 'SYNC_MY_HR_ATTENDANCE':
+        await this.myHrService.scheduleAttendanceSync();
+        return;
+
+      case 'SYNC_MY_HR_CHUNK' :
+        await this.myHrService.processChunk(message.payload.chunkId);
         return;
 
       default: {
@@ -689,61 +699,46 @@ export class SqsProcessor
   }
 
   private isAppQueueMessage(value: unknown): value is AppQueueMessage {
-    if (!value || typeof value !== 'object') {
-      return false;
-    }
+    if (!value || typeof value !== 'object') return false;
 
     const message = value as Record<string, unknown>;
 
-    if (typeof message.createdAt !== 'string') {
+    if (typeof message.createdAt !== 'string' || !message.payload) {
       return false;
     }
 
-    if (!message.payload || typeof message.payload !== 'object') {
-      return false;
-    }
+    switch (message.type) {
+      case 'SYNC_MY_HR_ATTENDANCE':
+        return (
+          !!message.payload &&
+          typeof message.payload === 'object' &&
+          !Array.isArray(message.payload)
+        );
 
-    if (message.type === 'SYNC_RECORD_CHUNK') {
-      const chunkPayload = message.payload as Record<string, unknown>;
-
-      return typeof chunkPayload.chunkId === 'string';
-    }
-
-    if (message.type !== 'SYNC_RECORDS') {
-      return false;
-    }
-
-    const messagePayload = message.payload as Record<string, unknown>;
-
-    if (!messagePayload.payload || typeof messagePayload.payload !== 'object') {
-      return false;
-    }
-
-    if (!Array.isArray(messagePayload.syncRecords)) {
-      return false;
-    }
-
-    if (!this.isCreateStoreSyncRecord(messagePayload.payload)) {
-      return false;
-    }
-
-    const syncPayload = messagePayload.payload;
-
-    const validSyncRecords = messagePayload.syncRecords.every((record) => {
-      if (!record || typeof record !== 'object') {
-        return false;
+      case 'SYNC_MY_HR_CHUNK':
+      case 'SYNC_RECORD_CHUNK': {
+        const payload = message.payload as Record<string, unknown>;
+        return typeof payload.chunkId === 'string';
       }
 
-      const item = record as Record<string, unknown>;
+      case 'SYNC_RECORDS': {
+        const payload = message.payload as Record<string, unknown>;
 
-      return typeof item.id === 'string' && typeof item.storesId === 'string';
-    });
+        if (!Array.isArray(payload.syncRecords)) return false;
+        if (!this.isCreateStoreSyncRecord(payload.payload)) return false;
 
-    if (!validSyncRecords) {
-      return false;
+        return payload.syncRecords.every(
+          (record) =>
+            record &&
+            typeof record === 'object' &&
+            typeof (record as Record<string, unknown>).id === 'string' &&
+            typeof (record as Record<string, unknown>).storesId === 'string',
+        );
+      }
+
+      default:
+        return false;
     }
-
-    return validSyncRecords && this.isCreateStoreSyncRecord(syncPayload);
   }
 
   private isCreateStoreSyncRecord(
