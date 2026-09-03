@@ -65,15 +65,26 @@ describe('SchedulerService', () => {
 
     await expect(service.queueMyHrAttendanceSync()).resolves.toBe(true);
 
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    const queuedMessage = sendMessage.mock.calls[0][0];
+    const triggeredAt = new Date(queuedMessage.createdAt);
+
     expect(findFirst).toHaveBeenCalledWith({
-      where: MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+      where: {
+        AND: [
+          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          {
+            createdAt: {
+              lte: triggeredAt,
+            },
+          },
+        ],
+      },
       select: {
         id: true,
       },
     });
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-
-    const queuedMessage = sendMessage.mock.calls[0][0];
 
     expect(queuedMessage.type).toBe('SYNC_MY_HR_ATTENDANCE');
     expect(queuedMessage.payload).toEqual({});

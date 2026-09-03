@@ -55,7 +55,7 @@ export class SqsProcessor
     private readonly sqsClient: SQSClient,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly myHrService: MyHrService
+    private readonly myHrService: MyHrService,
   ) {
     this.queueUrl = this.configService.getOrThrow<string>('AWS_SQS_QUEUE_URL');
     this.visibilityTimeoutSeconds = this.getVisibilityTimeoutSeconds();
@@ -148,10 +148,12 @@ export class SqsProcessor
         return;
 
       case 'SYNC_MY_HR_ATTENDANCE':
-        await this.myHrService.scheduleAttendanceSync();
+        await this.myHrService.scheduleAttendanceSync(
+          new Date(message.createdAt),
+        );
         return;
 
-      case 'SYNC_MY_HR_CHUNK' :
+      case 'SYNC_MY_HR_CHUNK':
         await this.myHrService.processChunk(message.payload.chunkId);
         return;
 
