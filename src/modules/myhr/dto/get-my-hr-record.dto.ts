@@ -1,10 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsInt,
-  IsOptional,
-  IsPositive,
-} from 'class-validator';
+import { IsInt, IsOptional, IsPositive } from 'class-validator';
 
 export class GetMyHRRecordDto {
   @ApiPropertyOptional({ default: 1, description: 'Page number' })

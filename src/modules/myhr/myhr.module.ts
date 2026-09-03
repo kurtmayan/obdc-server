@@ -1,14 +1,12 @@
 import { Module } from '@nestjs/common';
-import { MyHrService } from './myhr.service';
 import { MyHrController } from './myhr.controller';
-import { PrismaService } from '../prisma/prisma.service';
-import { SqsQueueModule } from '../sqs-queue/sqs-queue.module';
 import { FileSecurityModule } from '../file-security/file-security.module';
-import { SchedulerService } from '../scheduler/scheduler.service';
+import { SchedulerModule } from '../scheduler/scheduler.module';
+import { MyHrCoreModule } from './myhr-core.module';
 
 @Module({
-  imports: [SqsQueueModule, FileSecurityModule],
+  imports: [MyHrCoreModule, SchedulerModule, FileSecurityModule],
   controllers: [MyHrController],
-  providers: [MyHrService, PrismaService, SchedulerService],
+  exports: [MyHrCoreModule],
 })
 export class MyhrModule {}

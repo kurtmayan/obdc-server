@@ -76,6 +76,8 @@ model AttendanceRecord {
   storeSyncRecordID String
   storeSyncRecords  StoreSyncRecord     @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
   myHrSyncRecord    MyHrAttendanceSync?
+
+  @@index([createdAt, id])
 }
 
 enum LogStats {
@@ -114,12 +116,71 @@ model MyHrSync {
   jobs         MyHrSyncJob[]
 }
 
+enum MyHrTriggerSource {
+  CRON
+  MANUAL
+  CONTINUATION
+}
+
+enum MyHrTriggerOutcome {
+  CREATED
+  COALESCED
+  NO_RECORDS
+}
+
+enum MyHrJobStatus {
+  PROCESSING
+  SUCCESS
+  PARTIAL_SUCCESS
+  FAILED
+  NEEDS_REVIEW
+}
+
+enum MyHrChunkStatus {
+  PENDING
+  UPLOADING
+  VERIFYING
+  SUCCESS
+  FAILED
+  UNKNOWN
+}
+
+enum MyHrUploadAttemptStatus {
+  PREPARED
+  REQUEST_STARTED
+  ACCEPTED
+  REJECTED
+  UNKNOWN
+}
+
+enum MyHrOutboxMessageType {
+  START_MY_HR_SYNC
+  SYNC_MY_HR_CHUNK
+  CHECK_MY_HR_BATCH
+}
+
+model MyHrSyncTrigger {
+  id           String              @id @default(cuid())
+  triggerId    String              @unique
+  source       MyHrTriggerSource
+  scheduledFor DateTime
+  outcome      MyHrTriggerOutcome?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  jobId        String?
+  job          MyHrSyncJob?        @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([jobId])
+}
+
 model MyHrSyncJob {
-  id              String          @id @default(cuid())
-  status          SyncStatus      @default(PENDING)
-  totalRecords    Int             @default(0)
-  insertedRecords Int             @default(0)
-  failedRecords   Int             @default(0)
+  id              String            @id @default(cuid())
+  status          MyHrJobStatus     @default(PROCESSING)
+  totalRecords    Int               @default(0)
+  insertedRecords Int               @default(0)
+  failedRecords   Int               @default(0)
+  reviewRecords   Int               @default(0)
   startDate       DateTime?
   startRecordId   String?
   endDate         DateTime?
@@ -127,34 +188,46 @@ model MyHrSyncJob {
   startedAt       DateTime?
   completedAt     DateTime?
   errorMessage    String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   myHrSyncId      String
-  myHrSync        MyHrSync        @relation(fields: [myHrSyncId], references: [id], onDelete: Cascade)
+  myHrSync        MyHrSync          @relation(fields: [myHrSyncId], references: [id], onDelete: Cascade)
   chunks          MyHrSyncChunk[]
+  triggers        MyHrSyncTrigger[]
 
   @@index([myHrSyncId, status])
 }
 
 model MyHrSyncChunk {
-  id              String               @id @default(cuid())
-  status          SyncStatus           @default(PENDING)
-  attemptCount    Int                  @default(0)
-  totalRecords    Int
-  insertedRecords Int                  @default(0)
-  failedRecords   Int                  @default(0)
-  payload         Json
-  batchId         String?
-  errorMessage    String?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  myHrSyncJobId   String
-  myHrSyncJob     MyHrSyncJob          @relation(fields: [myHrSyncJobId], references: [id], onDelete: Cascade)
-  records         MyHrAttendanceSync[]
+  id                      String               @id @default(cuid())
+  sequence                Int
+  status                  MyHrChunkStatus      @default(PENDING)
+  uploadAttemptCount      Int                  @default(0)
+  statusCheckAttemptCount Int                  @default(0)
+  totalRecords            Int
+  insertedRecords         Int                  @default(0)
+  failedRecords           Int                  @default(0)
+  payload                 Json
+  payloadHash             String
+  payloadPurgedAt         DateTime?
+  batchId                 String?
+  claimToken              String?
+  leaseExpiresAt          DateTime?
+  verificationDeadline    DateTime?
+  errorMessage            String?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  myHrSyncJobId           String
+  myHrSyncJob             MyHrSyncJob          @relation(fields: [myHrSyncJobId], references: [id], onDelete: Cascade)
+  records                 MyHrAttendanceSync[]
+  uploadAttempts          MyHrUploadAttempt[]
 
+  @@unique([myHrSyncJobId, sequence])
   @@index([myHrSyncJobId, status])
+  @@index([status, leaseExpiresAt])
+  @@index([batchId])
 }
 
 // Authoritative delivery state for each source attendance record.  This
@@ -179,6 +252,38 @@ model MyHrAttendanceSync {
   @@index([batchId])
 }
 
+model MyHrUploadAttempt {
+  id                 String                  @id @default(cuid())
+  attemptNumber      Int
+  status             MyHrUploadAttemptStatus @default(PREPARED)
+  requestStartedAt   DateTime?
+  responseRecordedAt DateTime?
+  batchId            String?
+  errorMessage       String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  chunkId            String
+  chunk              MyHrSyncChunk           @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@unique([chunkId, attemptNumber])
+  @@index([status, createdAt])
+}
+
+model MyHrOutbox {
+  id           String                @id @default(cuid())
+  dedupKey     String                @unique
+  messageType  MyHrOutboxMessageType
+  payload      Json
+  availableAt  DateTime              @default(now())
+  attemptCount Int                   @default(0)
+  publishedAt  DateTime?
+  lastError    String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([publishedAt, availableAt])
+}
+
 enum SyncStatus {
   PENDING
   PROCESSING
@@ -188,9 +293,11 @@ enum SyncStatus {
 
 enum MyHrRecordSyncStatus {
   PENDING
-  PROCESSING
+  UPLOADING
+  VERIFYING
   SYNCED
   FAILED
+  UNKNOWN
 }
 
 model StoreSyncRecord {

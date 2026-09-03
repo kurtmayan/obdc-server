@@ -23,6 +23,6 @@
     "noFallthroughCasesInSwitch": false,
     "strictPropertyInitialization": false,
     "typeRoots": ["./node_modules/@types"],
-    "types": ["multer"]
+    "types": ["multer", "jest"]
   }
 }

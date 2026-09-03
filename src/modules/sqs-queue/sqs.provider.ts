@@ -7,8 +7,10 @@ export const SqsClientProvider: Provider = {
   provide: SQS_CLIENT,
   inject: [ConfigService],
   useFactory: (configService: ConfigService): SQSClient => {
+    const endpoint = configService.get<string>('AWS_SQS_ENDPOINT');
     return new SQSClient({
       region: configService.getOrThrow<string>('AWS_REGION'),
+      endpoint: endpoint || undefined,
       // credentials: {
       //   accessKeyId: configService.getOrThrow<string>('AWS_ACCESS_KEY_ID'),
       //   secretAccessKey: configService.getOrThrow<string>(

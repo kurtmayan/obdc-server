@@ -8,7 +8,9 @@ import morgan from 'morgan';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.getHttpAdapter().getInstance().set('trust proxy', true);
+  app.enableShutdownHooks();
+  const expressApp = app.getHttpAdapter().getInstance() as express.Application;
+  expressApp.set('trust proxy', true);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
   app.use(morgan('dev'));
@@ -19,4 +21,4 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
-bootstrap();
+void bootstrap();

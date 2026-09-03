@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  ChangeMessageVisibilityCommand,
   DeleteMessageCommand,
   Message,
   ReceiveMessageCommand,
@@ -23,7 +24,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateStoreSyncRecord } from '../sync/dto/create-store-sync-record.dto';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
-import { MyHrService } from '../myhr/myhr.service';
+import { MyHrSyncService } from '../myhr/myhr-sync.service';
+import { getPositiveInteger } from '../myhr/myhr-sync.config';
 
 type QueuedSyncRecord = {
   id: string;
@@ -49,25 +51,35 @@ export class SqsProcessor
   private readonly visibilityTimeoutSeconds: number;
 
   private running = false;
+  private pollPromise: Promise<void> | null = null;
+  private activeMyHrMessages = 0;
+  private readonly myHrWaiters: Array<() => void> = [];
+  private readonly myHrConcurrency: number;
 
   constructor(
     @Inject(SQS_CLIENT)
     private readonly sqsClient: SQSClient,
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
-    private readonly myHrService: MyHrService
+    private readonly myHrSyncService: MyHrSyncService,
   ) {
     this.queueUrl = this.configService.getOrThrow<string>('AWS_SQS_QUEUE_URL');
     this.visibilityTimeoutSeconds = this.getVisibilityTimeoutSeconds();
+    this.myHrConcurrency = getPositiveInteger(
+      this.configService,
+      'MYHR_WORKER_CONCURRENCY',
+      2,
+    );
   }
 
   onApplicationBootstrap(): void {
     this.running = true;
-    void this.poll();
+    this.pollPromise = this.poll();
   }
 
-  onApplicationShutdown(): void {
+  async onApplicationShutdown(): Promise<void> {
     this.running = false;
+    await this.pollPromise;
   }
 
   private async poll(): Promise<void> {
@@ -110,6 +122,13 @@ export class SqsProcessor
       return;
     }
 
+    const heartbeat = setInterval(
+      () => {
+        void this.extendVisibility(ReceiptHandle, MessageId);
+      },
+      Math.max(1_000, Math.floor((this.visibilityTimeoutSeconds * 1_000) / 2)),
+    );
+
     try {
       const parsed: unknown = JSON.parse(Body);
 
@@ -117,7 +136,8 @@ export class SqsProcessor
         throw new Error('Invalid SQS message structure');
       }
 
-      await this.handleMessage(parsed);
+      const shouldDelete = await this.handleMessage(parsed);
+      if (!shouldDelete) return;
 
       await this.sqsClient.send(
         new DeleteMessageCommand({
@@ -134,22 +154,44 @@ export class SqsProcessor
         `Failed to process message ${MessageId ?? 'unknown'}`,
         error instanceof Error ? error.stack : String(error),
       );
+    } finally {
+      clearInterval(heartbeat);
     }
   }
 
-  private async handleMessage(message: AppQueueMessage): Promise<void> {
+  private async handleMessage(message: AppQueueMessage): Promise<boolean> {
     switch (message.type) {
       case 'SYNC_RECORDS':
         await this.processSyncRecords(message.payload);
-        return;
+        return true;
 
       case 'SYNC_RECORD_CHUNK':
         await this.processSyncRecordChunk(message.payload);
-        return;
+        return true;
 
-      case 'SYNC_MY_HR_CHUNK' :
-        await this.myHrService.processChunk(message.payload.chunkId);
-        return;
+      case 'SYNC_MY_HR_CHUNK':
+        if (!this.isMyHrWorkerEnabled()) return false;
+        await this.withMyHrSlot(() =>
+          this.myHrSyncService.processChunk(message.payload.chunkId),
+        );
+        return true;
+
+      case 'START_MY_HR_SYNC':
+        if (!this.isMyHrWorkerEnabled()) return false;
+        await this.withMyHrSlot(() =>
+          this.myHrSyncService.handleTrigger(message.payload),
+        );
+        return true;
+
+      case 'CHECK_MY_HR_BATCH':
+        if (!this.isMyHrWorkerEnabled()) return false;
+        await this.withMyHrSlot(() =>
+          this.myHrSyncService.checkBatch(
+            message.payload.chunkId,
+            message.payload.batchId,
+          ),
+        );
+        return true;
 
       default: {
         const unsupportedMessage = message as {
@@ -169,6 +211,40 @@ export class SqsProcessor
     });
   }
 
+  private async extendVisibility(
+    receiptHandle: string,
+    messageId: string | undefined,
+  ): Promise<void> {
+    try {
+      await this.sqsClient.send(
+        new ChangeMessageVisibilityCommand({
+          QueueUrl: this.queueUrl,
+          ReceiptHandle: receiptHandle,
+          VisibilityTimeout: this.visibilityTimeoutSeconds,
+        }),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Failed to extend visibility for message ${messageId ?? 'unknown'}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private async withMyHrSlot<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.activeMyHrMessages >= this.myHrConcurrency) {
+      await new Promise<void>((resolve) => this.myHrWaiters.push(resolve));
+    }
+    this.activeMyHrMessages += 1;
+    try {
+      return await operation();
+    } finally {
+      this.activeMyHrMessages -= 1;
+      this.myHrWaiters.shift()?.();
+    }
+  }
+
   private getVisibilityTimeoutSeconds(): number {
     const configuredTimeout = Number(
       this.configService.get<string>('AWS_SQS_VISIBILITY_TIMEOUT_SECONDS'),
@@ -177,6 +253,15 @@ export class SqsProcessor
     return Number.isFinite(configuredTimeout) && configuredTimeout > 0
       ? configuredTimeout
       : 300;
+  }
+
+  private isMyHrWorkerEnabled(): boolean {
+    const enabled =
+      this.configService.get<string>('MYHR_WORKER_ENABLED', 'false') === 'true';
+    if (!enabled) {
+      this.logger.warn('event=myhr_message_skipped reason=worker_disabled');
+    }
+    return enabled;
   }
 
   private async processSyncRecords(messagePayload: SyncMessage): Promise<void> {
@@ -699,7 +784,7 @@ export class SqsProcessor
 
     const message = value as Record<string, unknown>;
 
-    if (typeof message.createdAt !== 'string' || !message.payload) {
+    if (!this.isIsoDate(message.createdAt) || !message.payload) {
       return false;
     }
 
@@ -707,7 +792,31 @@ export class SqsProcessor
       case 'SYNC_MY_HR_CHUNK':
       case 'SYNC_RECORD_CHUNK': {
         const payload = message.payload as Record<string, unknown>;
-        return typeof payload.chunkId === 'string';
+        return (
+          typeof payload.chunkId === 'string' &&
+          (message.type === 'SYNC_RECORD_CHUNK' ||
+            message.version === undefined ||
+            message.version === 1)
+        );
+      }
+
+      case 'START_MY_HR_SYNC': {
+        const payload = message.payload as Record<string, unknown>;
+        return (
+          message.version === 1 &&
+          typeof payload.triggerId === 'string' &&
+          ['CRON', 'MANUAL', 'CONTINUATION'].includes(String(payload.source)) &&
+          this.isIsoDate(payload.scheduledFor)
+        );
+      }
+
+      case 'CHECK_MY_HR_BATCH': {
+        const payload = message.payload as Record<string, unknown>;
+        return (
+          message.version === 1 &&
+          typeof payload.chunkId === 'string' &&
+          typeof payload.batchId === 'string'
+        );
       }
 
       case 'SYNC_RECORDS': {
@@ -728,6 +837,12 @@ export class SqsProcessor
       default:
         return false;
     }
+  }
+
+  private isIsoDate(value: unknown): value is string {
+    return (
+      typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+    );
   }
 
   private isCreateStoreSyncRecord(

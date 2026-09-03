@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuditTrailService } from './audit-trail.service';
 import { AuditTrailInterceptor } from './audit-trail.interceptor';
-import { PrismaService } from '../prisma/prisma.service';
 
 @Module({
-  providers: [AuditTrailService, AuditTrailInterceptor, PrismaService],
+  providers: [AuditTrailService, AuditTrailInterceptor],
   exports: [AuditTrailService, AuditTrailInterceptor],
 })
 export class AuditTrailModule {}

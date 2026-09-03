@@ -1,342 +1,123 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { PrismaService } from '../prisma/prisma.service';
+import { randomUUID } from 'node:crypto';
+import { formatInTimeZone } from 'date-fns-tz';
+import {
+  MyHrTriggerSource,
+  VersionedQueueMessage,
+} from 'src/types/sqs-message';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
-import { MyHrService } from '../myhr/myhr.service';
-import { MyHrRecordSyncStatus, SyncStatus } from 'src/generated/prisma/enums';
-import { MyHrSyncPayload } from 'src/types/my-hr';
 
-type TransactionClient = Parameters<Parameters<PrismaService['$transaction']>[0]>[0];
-
-type CreateSyncJobResult =
-  | { type: 'NO_RECORDS' }
-  | { type: 'CREATED'; job: { id: string }; chunks: { id: string }[]; totalRecords: number };
+export type MyHrTriggerReceipt = {
+  triggerId: string;
+  messageId?: string;
+  status: 'QUEUED' | 'DISABLED';
+};
 
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
-  private readonly jobPollIntervalMs = 5000;
-  private readonly jobWaitTimeoutMs = 30 * 60 * 1000;
-  private readonly sqsMaxAttempts = 3;
-  private readonly sqsRetryDelayMs = 2000;
-  
+  private readonly timezone = 'Asia/Manila';
+
   constructor(
-    private readonly prisma: PrismaService,
     private readonly sqsQueueService: SqsQueueService,
-    private readonly myHrService: MyHrService,
+    private readonly configService: ConfigService,
   ) {}
 
+  @Cron(CronExpression.EVERY_HOUR, {
+    name: 'myhr-hourly-trigger',
+    timeZone: 'Asia/Manila',
+    waitForCompletion: true,
+  })
+  async handleCron(): Promise<MyHrTriggerReceipt> {
+    const scheduledFor = new Date();
+    const triggerId = `myhr:cron:${formatInTimeZone(
+      scheduledFor,
+      this.timezone,
+      "yyyy-MM-dd'T'HH",
+    )}`;
 
-  @Cron('*/10 * * * * *')
-  //@Cron(CronExpression.EVERY_HOUR)
-  async handleCron() {
-    try {
-      this.logger.log('Starting MyHR attendance sync...');
+    return this.publishTrigger(triggerId, 'CRON', scheduledFor);
+  }
 
-      await this.waitForActiveJob();
+  async triggerManually(): Promise<MyHrTriggerReceipt> {
+    return this.publishTrigger(
+      `myhr:manual:${randomUUID()}`,
+      'MANUAL',
+      new Date(),
+    );
+  }
 
-      const scheduleResult = await this.createSyncJob();
-
-      if (scheduleResult.type === 'NO_RECORDS') {
-        this.logger.log('No new attendance records to sync.');
-        return;
-      }
-
-      const { job, chunks, totalRecords } = scheduleResult;
-
-      this.logger.log(`Found ${totalRecords} attendance records.`);
-      this.logger.log(`Created MyHR sync job ${job.id} with ${chunks.length} chunks.`);
-
-      try {
-        for (const [index, syncChunk] of chunks.entries()) {
-          await this.sendChunkWithRetry(syncChunk.id);
-          this.logger.log(`Queued MyHR chunk ${index + 1}/${chunks.length}: ${syncChunk.id}`);
-        }
-
-        this.logger.log(`MyHR sync job ${job.id} queued successfully.`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-
-        this.logger.error(`Failed to queue MyHR sync job ${job.id}: ${errorMessage}`);
-
-        await this.markJobAsFailed(job.id, errorMessage);
-      }
-    } catch (error) {
-      this.logger.error(
-        'MyHR attendance sync scheduling failed',
-        error instanceof Error ? error.stack : String(error),
-      );
+  private async publishTrigger(
+    triggerId: string,
+    source: MyHrTriggerSource,
+    scheduledFor: Date,
+  ): Promise<MyHrTriggerReceipt> {
+    if (!this.isEnabled()) {
+      this.logger.warn(`MyHR sync is disabled; skipped trigger ${triggerId}`);
+      return { triggerId, status: 'DISABLED' };
     }
-  }
 
-  private async waitForActiveJob(): Promise<void> {
-    const startedWaitingAt = Date.now();
-
-    while (true) {
-      const activeJob = await this.prisma.myHrSyncJob.findFirst({
-        where: {
-          status: {
-            in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
-          },
-        },
-        orderBy: {
-          startedAt: 'asc',
-        },
-        select: {
-          id: true,
-          status: true,
-        },
-      });
-
-      if (!activeJob) {
-        this.logger.log('No active MyHR sync job. Continuing...');
-        return;
+    const message: VersionedQueueMessage<
+      'START_MY_HR_SYNC',
+      {
+        triggerId: string;
+        source: MyHrTriggerSource;
+        scheduledFor: string;
       }
+    > = {
+      version: 1,
+      type: 'START_MY_HR_SYNC',
+      payload: {
+        triggerId,
+        source,
+        scheduledFor: scheduledFor.toISOString(),
+      },
+      createdAt: new Date().toISOString(),
+    };
 
-      if (Date.now() - startedWaitingAt >= this.jobWaitTimeoutMs) {
-        throw new Error(
-          `Timed out waiting for MyHR sync job ${activeJob.id} to finish. Current status: ${activeJob.status}`,
-        );
-      }
-
-      this.logger.log(
-        `MyHR sync job ${activeJob.id} is ${activeJob.status}. Waiting ${this.jobPollIntervalMs / 1000}s...`,
-      );
-
-      await this.sleep(this.jobPollIntervalMs);
-    }
-  }
-
-  private async createSyncJob(): Promise<CreateSyncJobResult> {
-    return this.prisma.$transaction(async (tx) => {
-      const sync = await this.getOrCreateSync(tx);
-
-      const activeJob = await tx.myHrSyncJob.findFirst({
-        where: {
-          myHrSyncId: sync.id,
-          status: {
-            in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
-          },
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      if (activeJob) {
-        throw new Error(`Another MyHR sync job became active: ${activeJob.id}`);
-      }
-
-      const attendanceRecords = await this.getUnsyncedAttendance(tx);
-
-      if (attendanceRecords.length === 0) {
-        return { type: 'NO_RECORDS' as const };
-      }
-
-      const payload: MyHrSyncPayload[] = attendanceRecords.map((record) => ({
-        attendanceRecordId: record.id,
-        empid: record.userId,
-        logdt: this.formatDate(record.logDate),
-        logtm: this.formatDateTime(record.logDate),
-        logstats: record.logType,
-        location: record.storeSyncRecords.store.name,
-      }));
-
-      const payloadChunks = this.myHrService.chunkPayload(payload);
-      const firstRecord = attendanceRecords[0];
-      const lastRecord = attendanceRecords[attendanceRecords.length - 1];
-
-      const job = await tx.myHrSyncJob.create({
-        data: {
-          myHrSyncId: sync.id,
-          status: SyncStatus.PROCESSING,
-          startedAt: new Date(),
-          totalRecords: attendanceRecords.length,
-          startDate: firstRecord.createdAt,
-          startRecordId: firstRecord.id,
-          endDate: lastRecord.createdAt,
-          endRecordId: lastRecord.id,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      const chunks: { id: string }[] = [];
-
-      for (const chunkRecords of payloadChunks) {
-        const payloadWithoutAttendanceId = chunkRecords.map(
-          ({ attendanceRecordId: _attendanceRecordId, ...record }) => record,
-        );
-
-        const chunk = await tx.myHrSyncChunk.create({
-          data: {
-            myHrSyncJobId: job.id,
-            status: SyncStatus.PENDING,
-            totalRecords: chunkRecords.length,
-            payload: payloadWithoutAttendanceId,
-          },
-          select: {
-            id: true,
-          },
-        });
-
-        for (const record of chunkRecords) {
-          await tx.myHrAttendanceSync.upsert({
-            where: {
-              attendanceRecordId: record.attendanceRecordId,
-            },
-            create: {
-              attendanceRecordId: record.attendanceRecordId,
-              chunkId: chunk.id,
-            },
-            update: {
-              status: MyHrRecordSyncStatus.PENDING,
-              chunkId: chunk.id,
-              batchId: null,
-              errorMessage: null,
-              startedAt: null,
-            },
-          });
-        }
-
-        chunks.push(chunk);
-      }
-
-      return {
-        type: 'CREATED' as const,
-        job,
-        chunks,
-        totalRecords: attendanceRecords.length,
-      };
-    });
-  }
-
-  private async sendChunkWithRetry(chunkId: string): Promise<void> {
     let lastError: unknown;
-
-    for (let attempt = 1; attempt <= this.sqsMaxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await this.sqsQueueService.sendMessage({
-          type: 'SYNC_MY_HR_CHUNK',
-          payload: {
-            chunkId,
-          },
-          createdAt: new Date().toISOString(),
-        });
-
-        return;
+        const result = await this.sqsQueueService.sendMessage(message);
+        this.logger.log(
+          `event=myhr_trigger_queued triggerId=${triggerId} source=${source} messageId=${result.MessageId ?? 'unknown'}`,
+        );
+        return {
+          triggerId,
+          messageId: result.MessageId,
+          status: 'QUEUED',
+        };
       } catch (error) {
         lastError = error;
-
         this.logger.warn(
-          `Failed to queue MyHR chunk ${chunkId}. Attempt ${attempt}/${this.sqsMaxAttempts}.`,
+          `event=myhr_trigger_queue_failed triggerId=${triggerId} attempt=${attempt}`,
         );
-
-        if (attempt < this.sqsMaxAttempts) {
-          await this.sleep(this.sqsRetryDelayMs);
+        if (attempt < 3) {
+          const delayMs =
+            500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
       }
     }
 
-    throw lastError instanceof Error ? lastError : new Error(`Failed to queue MyHR chunk ${chunkId}`);
+    this.logger.error(
+      `event=myhr_trigger_queue_exhausted triggerId=${triggerId}`,
+      lastError instanceof Error ? lastError.stack : String(lastError),
+    );
+    throw new ServiceUnavailableException(
+      'Unable to queue MyHR synchronization',
+    );
   }
 
-  private async markJobAsFailed(jobId: string, errorMessage: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.myHrSyncChunk.updateMany({
-        where: {
-          myHrSyncJobId: jobId,
-          status: {
-            in: [SyncStatus.PENDING, SyncStatus.PROCESSING],
-          },
-        },
-        data: {
-          status: SyncStatus.FAILED,
-          completedAt: new Date(),
-          errorMessage,
-        },
-      });
-
-      await tx.myHrAttendanceSync.updateMany({
-        where: {
-          chunk: {
-            myHrSyncJobId: jobId,
-          },
-          status: {
-            in: [MyHrRecordSyncStatus.PENDING, MyHrRecordSyncStatus.PROCESSING],
-          },
-        },
-        data: {
-          status: MyHrRecordSyncStatus.FAILED,
-          errorMessage,
-          startedAt: null,
-        },
-      });
-
-      await tx.myHrSyncJob.update({
-        where: {
-          id: jobId,
-        },
-        data: {
-          status: SyncStatus.FAILED,
-          completedAt: new Date(),
-          errorMessage,
-        },
-      });
-    });
-  }
-
-  private async getOrCreateSync(tx: TransactionClient) {
-    const sync = await tx.myHrSync.findFirst();
-
-    if (sync) {
-      return sync;
-    }
-
-    return tx.myHrSync.create({
-      data: {},
-    });
-  }
-
-  private async getUnsyncedAttendance(tx: TransactionClient) {
-    return tx.attendanceRecord.findMany({
-      where: {
-        OR: [
-          { myHrSyncRecord: { is: null } },
-          { myHrSyncRecord: { is: { status: MyHrRecordSyncStatus.FAILED } } },
-        ],
-      },
-      include: {
-        storeSyncRecords: {
-          include: {
-            store: true,
-          },
-        },
-      },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    });
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private formatDate(date: Date): string {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-
-    return `${month}/${day}/${year}`;
-  }
-
-  private formatDateTime(date: Date): string {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-
-    return `${month}/${day}/${year} ${hours}:${minutes}`;
+  private isEnabled(): boolean {
+    return (
+      this.configService.get<string>('MYHR_SYNC_ENABLED', 'false') === 'true'
+    );
   }
 }

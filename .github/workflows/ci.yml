@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: obdc_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d obdc_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      elasticmq:
+        image: softwaremill/elasticmq-native:1.6.14
+        ports:
+          - 9324:9324
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/obdc_test
+      AWS_REGION: elasticmq
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_SQS_ENDPOINT: http://localhost:9324
+      MYHR_SYNC_ENABLED: 'false'
+      MYHR_WORKER_ENABLED: 'false'
+      MYHR_INTEGRATION: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Validate and apply migrations to disposable PostgreSQL
+        run: |
+          npx prisma validate
+          npx prisma migrate deploy
+          npx prisma migrate status
+      - run: npm run build
+      - run: npm run lint:myhr
+      - run: npm test -- --runInBand
+      - run: npm run test:integration:myhr

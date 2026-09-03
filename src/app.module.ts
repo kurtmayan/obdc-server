@@ -3,9 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { ConfigModule } from '@nestjs/config';
-import { PrismaService } from './modules/prisma/prisma.service';
-import { StoreController } from './modules/store/store.controller';
-import { StoreService } from './modules/store/store.service';
+import { PrismaModule } from './modules/prisma/prisma.module';
 import { StoreModule } from './modules/store/store.module';
 import { DeviceModule } from './modules/device/device.module';
 import { SyncModule } from './modules/sync/sync.module';
@@ -17,21 +15,22 @@ import { MailModule } from './modules/mail/mail.module';
 import { UsersModule } from './modules/users/users.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { ExcelModule } from './modules/excel/excel.module';
-import { SqsQueueModule } from './modules/sqs-queue/sqs-queue.module';
 import { TestingModule } from './modules/testing/testing.module';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditTrailModule } from './modules/audit-trail/audit-trail.module';
 import { AuditTrailInterceptor } from './modules/audit-trail/audit-trail.interceptor';
 import { MyhrModule } from './modules/myhr/myhr.module';
-import { SchedulerModule } from './modules/scheduler/scheduler.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { validateEnvironment } from './config/environment.validation';
 
 @Module({
   imports: [
     AttendanceModule,
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateEnvironment,
     }),
+    PrismaModule,
     StoreModule,
     DeviceModule,
     SyncModule,
@@ -40,18 +39,14 @@ import { ScheduleModule } from '@nestjs/schedule';
     UsersModule,
     StatisticsModule,
     ExcelModule,
-    SqsQueueModule,
     TestingModule,
     AuditTrailModule,
     MyhrModule,
     ScheduleModule.forRoot(),
-    SchedulerModule,
   ],
-  controllers: [AppController, StoreController],
+  controllers: [AppController],
   providers: [
     AppService,
-    PrismaService,
-    StoreService,
     {
       provide: APP_GUARD,
       useClass: AuthGuard,
