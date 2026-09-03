@@ -100,6 +100,9 @@ describe('MyHrService attendance scheduling', () => {
           findUnique: findJob,
           update: updateJob,
         },
+        attendanceRecord: {
+          findMany: findAttendance,
+        },
       } as unknown as PrismaService,
       {
         get: getConfig,
@@ -115,11 +118,19 @@ describe('MyHrService attendance scheduling', () => {
   });
 
   it('creates and queues every chunk for a 12,000-record snapshot', async () => {
-    findAttendance.mockResolvedValue(createAttendanceRecords(12_000));
+    const attendanceRecords = createAttendanceRecords(12_000);
+    let offset = 0;
+
+    findAttendance.mockImplementation(() => {
+      const page = attendanceRecords.slice(offset, offset + 500);
+      offset += page.length;
+
+      return Promise.resolve(page);
+    });
 
     await service.scheduleAttendanceSync(TRIGGERED_AT);
 
-    expect(findAttendance).toHaveBeenCalledWith({
+    const expectedAttendanceQuery = {
       where: {
         AND: [
           MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
@@ -130,17 +141,47 @@ describe('MyHrService attendance scheduling', () => {
           },
         ],
       },
-      include: {
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        logDate: true,
+        logType: true,
         storeSyncRecords: {
-          include: {
-            store: true,
+          select: {
+            store: {
+              select: {
+                name: true,
+              },
+            },
           },
         },
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    });
+      take: 500,
+    };
+
+    expect(findAttendance).toHaveBeenCalledTimes(25);
+
+    for (const [query] of findAttendance.mock.calls) {
+      expect(query).toEqual(expectedAttendanceQuery);
+    }
+
     expect(createJob).toHaveBeenCalledWith(
       expect.objectContaining({
+        data: expect.objectContaining({
+          myHrSyncId: 'sync-1',
+          status: SyncStatus.PROCESSING,
+          startedAt: expect.any(Date),
+        }),
+      }),
+    );
+    expect(createJob.mock.calls[0][0].data).not.toHaveProperty('totalRecords');
+    expect(updateJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'job-1',
+        },
         data: expect.objectContaining({
           totalRecords: 12_000,
           startRecordId: 'attendance-0',
@@ -148,7 +189,20 @@ describe('MyHrService attendance scheduling', () => {
         }),
       }),
     );
+    expect(createJob).toHaveBeenCalledTimes(1);
     expect(createChunk).toHaveBeenCalledTimes(24);
+    expect(
+      createChunk.mock.calls.every(
+        ([query]) => query.data.myHrSyncJobId === 'job-1',
+      ),
+    ).toBe(true);
+    expect(createAttendanceSync).toHaveBeenCalledTimes(24);
+    expect(
+      createAttendanceSync.mock.calls.reduce(
+        (total, [query]) => total + query.data.length,
+        0,
+      ),
+    ).toBe(12_000);
     expect(sendMessage).toHaveBeenCalledTimes(24);
 
     for (const [index, call] of sendMessage.mock.calls.entries()) {
