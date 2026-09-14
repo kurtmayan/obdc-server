@@ -30,8 +30,12 @@ describe('MyHrService attendance scheduling', () => {
   const updateRecordStatus = jest.fn();
   const findJob = jest.fn();
   const updateJob = jest.fn();
+  const createBatch = jest.fn();
+  const createBiometricRecords = jest.fn();
   const sendMessage = jest.fn();
   const getConfig = jest.fn();
+  const getRequiredConfig = jest.fn();
+  const fetchMock = jest.fn<typeof fetch>();
 
   const transactionClient = {
     myHrSync: {
@@ -72,6 +76,8 @@ describe('MyHrService attendance scheduling', () => {
     createAttendanceSync.mockResolvedValue({ count: 0 });
     updateChunk.mockResolvedValue({ count: 1 });
     updateRecordStatus.mockResolvedValue({ count: 1 });
+    createBatch.mockResolvedValue({ id: 'batch-1' });
+    createBiometricRecords.mockResolvedValue({ count: 1 });
     findJob.mockResolvedValue({
       id: 'job-1',
       status: SyncStatus.PROCESSING,
@@ -80,6 +86,17 @@ describe('MyHrService attendance scheduling', () => {
     updateJob.mockResolvedValue({ id: 'job-1' });
     sendMessage.mockResolvedValue({});
     getConfig.mockReturnValue(undefined);
+    getRequiredConfig.mockImplementation((key: string) => {
+      const values: Record<string, string> = {
+        MYHR_API_URL: 'https://myhr.example.test',
+        MYHR_USERNAME: 'myhr-user',
+        MYHR_PASSWORD: 'myhr-password',
+      };
+
+      return values[key];
+    });
+    fetchMock.mockReset();
+    global.fetch = fetchMock as unknown as typeof fetch;
 
     let chunkNumber = 0;
     createChunk.mockImplementation(() =>
@@ -100,12 +117,19 @@ describe('MyHrService attendance scheduling', () => {
           findUnique: findJob,
           update: updateJob,
         },
+        myHRBatch: {
+          create: createBatch,
+        },
+        biometricRecord: {
+          createMany: createBiometricRecords,
+        },
         attendanceRecord: {
           findMany: findAttendance,
         },
       } as unknown as PrismaService,
       {
         get: getConfig,
+        getOrThrow: getRequiredConfig,
       } as unknown as ConfigService,
       {
         sendMessage,
@@ -115,6 +139,119 @@ describe('MyHrService attendance scheduling', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('logs the MyHR upload payload and response on success', async () => {
+    const logger = replaceServiceLogger(service);
+    const payload = createPayload(1);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse({ accessToken: 'token-1' }, { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        createResponse({ batchId: 'batch-1' }, { status: 200 }),
+      );
+
+    await expect(
+      service.uploadBiometrics(payload, { chunkId: 'chunk-1' }),
+    ).resolves.toEqual({
+      batchId: 'batch-1',
+      sent: 1,
+      saved: 1,
+    });
+
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        myHrLog: true,
+        operation: 'uploadBiometrics',
+        method: 'POST',
+        attempt: 1,
+        chunkId: 'chunk-1',
+        payload,
+        response: expect.objectContaining({
+          ok: true,
+          status: 200,
+          body: { batchId: 'batch-1' },
+        }),
+      }),
+    );
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain('token-1');
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain('myhr-password');
+  });
+
+  it('logs the MyHR upload payload and failed response as an error', async () => {
+    const logger = replaceServiceLogger(service);
+    const payload = createPayload(1);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse({ accessToken: 'token-1' }, { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        createResponse(
+          { message: 'invalid payload' },
+          { status: 422, statusText: 'Unprocessable Entity' },
+        ),
+      );
+
+    await expect(service.uploadBiometrics(payload)).rejects.toThrow(
+      'MyHR upload failed: 422 Unprocessable Entity',
+    );
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        myHrLog: true,
+        operation: 'uploadBiometrics',
+        payload,
+        response: expect.objectContaining({
+          ok: false,
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          body: { message: 'invalid payload' },
+        }),
+      }),
+    );
+  });
+
+  it('logs both MyHR upload attempts after a 401 retry without logging tokens', async () => {
+    const logger = replaceServiceLogger(service);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        createResponse({ accessToken: 'token-1' }, { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        createResponse({ message: 'expired' }, { status: 401 }),
+      )
+      .mockResolvedValueOnce(
+        createResponse({ accessToken: 'token-2' }, { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        createResponse({ batchId: 'batch-1' }, { status: 200 }),
+      );
+
+    await service.uploadBiometrics(createPayload(1));
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 1,
+        response: expect.objectContaining({
+          status: 401,
+        }),
+      }),
+    );
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 2,
+        response: expect.objectContaining({
+          status: 200,
+          body: { batchId: 'batch-1' },
+        }),
+      }),
+    );
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain('token-2');
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('token-1');
   });
 
   it('creates and queues every chunk for a 12,000-record snapshot', async () => {
@@ -376,4 +513,29 @@ function createPayload(count: number): MyHrPayload[] {
     logstats: 1,
     location: 'Store 1',
   }));
+}
+
+function createResponse(
+  body: unknown,
+  init: { status: number; statusText?: string },
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: init.status,
+    statusText: init.statusText ?? (init.status >= 400 ? 'Error' : 'OK'),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
+function replaceServiceLogger(service: MyHrService) {
+  const logger = {
+    log: jest.fn(),
+    error: jest.fn(),
+    warn: jest.fn(),
+  };
+
+  (service as unknown as { logger: typeof logger }).logger = logger;
+
+  return logger;
 }

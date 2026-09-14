@@ -42,6 +42,22 @@ export type MyHrUploadResult = {
   saved: number;
 };
 
+type MyHrUploadOptions = {
+  chunkId?: string;
+};
+
+type MyHrExchangeLog = {
+  operation: string;
+  method: string;
+  url: string;
+  attempt: number;
+  startedAt: number;
+  payload?: unknown;
+  response: Response;
+  responseBody: string;
+  chunkId?: string;
+};
+
 @Injectable()
 export class MyHrService {
   private readonly logger = new Logger(MyHrService.name);
@@ -67,7 +83,10 @@ export class MyHrService {
     this.myHrToken = null;
   }
 
-  async uploadBiometrics(payload: MyHrPayload[]): Promise<MyHrUploadResult> {
+  async uploadBiometrics(
+    payload: MyHrPayload[],
+    options: MyHrUploadOptions = {},
+  ): Promise<MyHrUploadResult> {
     if (payload.length === 0) {
       throw new Error('MyHR payload is empty');
     }
@@ -78,6 +97,8 @@ export class MyHrService {
       `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
       '/api/biometric/upload/bulk';
 
+    let attempt = 1;
+    let startedAt = Date.now();
     let response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -86,11 +107,26 @@ export class MyHrService {
       },
       body: JSON.stringify(payload),
     });
+    let responseBody = await response.text();
+
+    this.logMyHrExchange({
+      operation: 'uploadBiometrics',
+      method: 'POST',
+      url: apiUrl,
+      attempt,
+      startedAt,
+      payload,
+      response,
+      responseBody,
+      chunkId: options.chunkId,
+    });
 
     if (response.status === 401) {
       this.clearMyHrToken();
       token = await this.getMyHrToken();
 
+      attempt += 1;
+      startedAt = Date.now();
       response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -99,9 +135,20 @@ export class MyHrService {
         },
         body: JSON.stringify(payload),
       });
-    }
+      responseBody = await response.text();
 
-    const responseBody = await response.text();
+      this.logMyHrExchange({
+        operation: 'uploadBiometrics',
+        method: 'POST',
+        url: apiUrl,
+        attempt,
+        startedAt,
+        payload,
+        response,
+        responseBody,
+        chunkId: options.chunkId,
+      });
+    }
 
     if (!response.ok) {
       throw new Error(
@@ -503,7 +550,7 @@ export class MyHrService {
 
       const payload = chunk.payload;
 
-      const result = await this.uploadBiometrics(payload);
+      const result = await this.uploadBiometrics(payload, { chunkId });
 
       await this.prisma.$transaction(async (tx) => {
         await tx.myHrSyncChunk.update({
@@ -927,6 +974,8 @@ export class MyHrService {
       `${this.configService.getOrThrow<string>('MYHR_API_URL')}` +
       `/api/biometric/upload/bulk/status/${batchId}`;
 
+    let attempt = 1;
+    let startedAt = Date.now();
     let response = await fetch(apiUrl, {
       method: 'GET',
       headers: {
@@ -934,11 +983,25 @@ export class MyHrService {
         Authorization: `Bearer ${token}`,
       },
     });
+    let responseBody = await response.text();
+
+    this.logMyHrExchange({
+      operation: 'getBiometricUploadStatus',
+      method: 'GET',
+      url: apiUrl,
+      attempt,
+      startedAt,
+      payload: { batchId },
+      response,
+      responseBody,
+    });
 
     if (response.status === 401) {
       this.clearMyHrToken();
       token = await this.getMyHrToken();
 
+      attempt += 1;
+      startedAt = Date.now();
       response = await fetch(apiUrl, {
         method: 'GET',
         headers: {
@@ -946,17 +1009,76 @@ export class MyHrService {
           Authorization: `Bearer ${token}`,
         },
       });
+      responseBody = await response.text();
+
+      this.logMyHrExchange({
+        operation: 'getBiometricUploadStatus',
+        method: 'GET',
+        url: apiUrl,
+        attempt,
+        startedAt,
+        payload: { batchId },
+        response,
+        responseBody,
+      });
     }
 
     if (!response.ok) {
-      const errorBody = await response.text();
-
       throw new Error(
-        `MyHR status request failed: ${response.status} ${errorBody}`,
+        `MyHR status request failed: ${response.status} ${responseBody}`,
       );
     }
 
-    return response.json();
+    return responseBody ? JSON.parse(responseBody) : {};
+  }
+
+  private logMyHrExchange({
+    operation,
+    method,
+    url,
+    attempt,
+    startedAt,
+    payload,
+    response,
+    responseBody,
+    chunkId,
+  }: MyHrExchangeLog): void {
+    const logPayload = {
+      message: `MyHR ${operation} ${response.ok ? 'succeeded' : 'failed'}`,
+      myHrLog: true,
+      operation,
+      method,
+      url,
+      attempt,
+      durationMs: Date.now() - startedAt,
+      chunkId,
+      payload,
+      response: {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        body: this.parseResponseBodyForLog(responseBody),
+      },
+    };
+
+    if (response.ok) {
+      this.logger.log(logPayload);
+      return;
+    }
+
+    this.logger.error(logPayload);
+  }
+
+  private parseResponseBodyForLog(responseBody: string): unknown {
+    if (!responseBody) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(responseBody);
+    } catch {
+      return responseBody;
+    }
   }
 
   private getLogStats(value: number): LogStats {

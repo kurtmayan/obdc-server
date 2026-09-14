@@ -1,4 +1,4 @@
-import { SQSClient } from '@aws-sdk/client-sqs';
+import { ReceiveMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { ConfigService } from '@nestjs/config';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Status, SyncStatus } from 'src/generated/prisma/enums';
@@ -23,6 +23,8 @@ describe('SqsProcessor store sync finalization', () => {
   const chunkUpdate = jest.fn();
   const chunkUpdateMany = jest.fn();
   const recordUpdateMany = jest.fn();
+  const sqsSend = jest.fn();
+  const configGet = jest.fn();
 
   let processor: SqsProcessor;
   let internals: ProcessorInternals;
@@ -34,12 +36,16 @@ describe('SqsProcessor store sync finalization', () => {
     chunkUpdate.mockResolvedValue({});
     chunkUpdateMany.mockResolvedValue({ count: 1 });
     recordUpdateMany.mockResolvedValue({ count: 1 });
+    sqsSend.mockResolvedValue({});
+    configGet.mockReturnValue(undefined);
 
     processor = new SqsProcessor(
-      {} as SQSClient,
+      {
+        send: sqsSend,
+      } as unknown as SQSClient,
       {
         getOrThrow: jest.fn(() => 'https://sqs.example.test/queue'),
-        get: jest.fn(() => undefined),
+        get: configGet,
       } as unknown as ConfigService,
       {
         $executeRaw: executeRaw,
@@ -57,6 +63,20 @@ describe('SqsProcessor store sync finalization', () => {
     );
 
     internals = processor as unknown as ProcessorInternals;
+  });
+
+  it('polls SQS on application bootstrap', async () => {
+    sqsSend.mockImplementation(async (command: ReceiveMessageCommand) => {
+      processor.onApplicationShutdown();
+
+      return command instanceof ReceiveMessageCommand ? { Messages: [] } : {};
+    });
+
+    processor.onApplicationBootstrap();
+    await Promise.resolve();
+
+    expect(sqsSend).toHaveBeenCalledTimes(1);
+    expect(sqsSend).toHaveBeenCalledWith(expect.any(ReceiveMessageCommand));
   });
 
   function getFinalizationSql(): string {
