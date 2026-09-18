@@ -340,9 +340,7 @@ export class MyHrService {
         totalRecords += attendanceRecords.length;
         lastRecord = attendanceRecords[attendanceRecords.length - 1];
 
-        this.logger.log(
-          `Created MyHR chunk ${chunks.length}: ${chunk.id}`,
-        );
+        this.logger.log(`Created MyHR chunk ${chunks.length}: ${chunk.id}`);
 
         attendanceRecords = await this.getUnsyncedAttendance(
           this.prisma,
@@ -1093,19 +1091,19 @@ export class MyHrService {
   }
 
   private formatDate(date: Date): string {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const year = date.getUTCFullYear();
 
     return `${month}/${day}/${year}`;
   }
 
   private formatDateTime(date: Date): string {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    const hours = String(date.getUTCHours()).padStart(2, '0');
+    const minutes = String(date.getUTCMinutes()).padStart(2, '0');
 
     return `${month}/${day}/${year} ${hours}:${minutes}`;
   }
