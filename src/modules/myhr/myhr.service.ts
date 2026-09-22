@@ -621,13 +621,19 @@ export class MyHrService {
     }
   }
 
+  private mapLogTypeToExportStatus(logType: number) {
+    if (logType === 0) return '1';
+    if (logType === 1) return '0';
+    return '2';
+  }
+
   private buildPayload(record: AttendanceRecordForSync): MyHrSyncPayload {
     return {
       attendanceRecordId: record.id,
       empid: record.userId,
       logdt: this.formatDate(record.logDate),
       logtm: this.formatDateTime(record.logDate),
-      logstats: record.logType,
+      logstats: Number(this.mapLogTypeToExportStatus(record.logType)),
       location: record.storeSyncRecords.store.name,
     };
   }
