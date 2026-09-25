@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from '../myhr/myhr-sync-eligibility';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 import { SchedulerService } from './scheduler.service';
@@ -13,6 +13,7 @@ jest.mock('@nestjs/schedule', () => ({
 
 describe('SchedulerService', () => {
   const findFirst = jest.fn();
+  const getConfig = jest.fn();
   const sendMessage =
     jest.fn<
       (payload: {
@@ -26,6 +27,7 @@ describe('SchedulerService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    getConfig.mockReturnValue(undefined);
 
     service = new SchedulerService(
       {
@@ -34,20 +36,15 @@ describe('SchedulerService', () => {
         },
       } as unknown as PrismaService,
       {
+        get: getConfig,
+      } as unknown as ConfigService,
+      {
         sendMessage,
       } as unknown as SqsQueueService,
     );
   });
 
-  it('only considers records without a MyHR sync record eligible', () => {
-    expect(MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE).toEqual({
-      myHrSyncRecord: {
-        is: null,
-      },
-    });
-  });
-
-  it('queues a MyHR sync trigger when an eligible attendance record exists', async () => {
+  it('queues a MyHR sync trigger with default eligibility when pilot testing is disabled', async () => {
     findFirst.mockResolvedValue({ id: 'attendance-1' });
     sendMessage.mockResolvedValue({});
 
@@ -61,7 +58,11 @@ describe('SchedulerService', () => {
     expect(findFirst).toHaveBeenCalledWith({
       where: {
         AND: [
-          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          {
+            myHrSyncRecord: {
+              is: null,
+            },
+          },
           {
             createdAt: {
               lte: triggeredAt,
@@ -77,6 +78,55 @@ describe('SchedulerService', () => {
     expect(queuedMessage.type).toBe('SYNC_MY_HR_ATTENDANCE');
     expect(queuedMessage.payload).toEqual({});
     expect(typeof queuedMessage.createdAt).toBe('string');
+  });
+
+  it('adds pilot restrictions to the trigger query when pilot testing is enabled', async () => {
+    getConfig.mockImplementation((key: string) =>
+      key === 'IS_PILOT_TESTING' ? 'TRUE' : undefined,
+    );
+    findFirst.mockResolvedValue({ id: 'attendance-1' });
+    sendMessage.mockResolvedValue({});
+
+    await expect(service.queueMyHrAttendanceSync()).resolves.toBe(true);
+
+    const queuedMessage = sendMessage.mock.calls[0][0];
+    const triggeredAt = new Date(queuedMessage.createdAt);
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        AND: [
+          {
+            AND: [
+              {
+                myHrSyncRecord: {
+                  is: null,
+                },
+              },
+              {
+                logDate: {
+                  gte: new Date('2026-09-22T00:00:00.000Z'),
+                },
+                storeSyncRecords: {
+                  store: {
+                    name: {
+                      in: ['HOEW', 'HOEL'],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+          {
+            createdAt: {
+              lte: triggeredAt,
+            },
+          },
+        ],
+      },
+      select: {
+        id: true,
+      },
+    });
   });
 
   it('skips SQS when no eligible attendance record exists', async () => {

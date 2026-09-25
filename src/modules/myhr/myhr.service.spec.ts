@@ -11,7 +11,6 @@ import { MyHrRecordSyncStatus, SyncStatus } from 'src/generated/prisma/enums';
 import { MyHrPayload } from 'src/types/my-hr';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
-import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from './myhr-sync-eligibility';
 import { MyHrService } from './myhr.service';
 
 const TRIGGERED_AT = new Date('2026-09-03T06:00:00.000Z');
@@ -255,6 +254,9 @@ describe('MyHrService attendance scheduling', () => {
   });
 
   it('creates and queues every chunk for a 12,000-record snapshot', async () => {
+    getConfig.mockImplementation((key: string) =>
+      key === 'IS_PILOT_TESTING' ? 'false' : undefined,
+    );
     const attendanceRecords = createAttendanceRecords(12_000);
     let offset = 0;
 
@@ -267,36 +269,10 @@ describe('MyHrService attendance scheduling', () => {
 
     await service.scheduleAttendanceSync(TRIGGERED_AT);
 
-    const expectedAttendanceQuery = {
-      where: {
-        AND: [
-          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
-          {
-            createdAt: {
-              lte: TRIGGERED_AT,
-            },
-          },
-        ],
-      },
-      select: {
-        id: true,
-        userId: true,
-        createdAt: true,
-        logDate: true,
-        logType: true,
-        storeSyncRecords: {
-          select: {
-            store: {
-              select: {
-                name: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      take: 500,
-    };
+    const expectedAttendanceQuery = createExpectedAttendanceQuery(
+      TRIGGERED_AT,
+      false,
+    );
 
     expect(findAttendance).toHaveBeenCalledTimes(25);
 
@@ -351,6 +327,23 @@ describe('MyHrService attendance scheduling', () => {
         createdAt: expect.any(String),
       });
     }
+  });
+
+  it('adds pilot restrictions to attendance lookup when pilot testing is enabled', async () => {
+    getConfig.mockImplementation((key: string) =>
+      key === 'IS_PILOT_TESTING' ? 'true' : undefined,
+    );
+    findAttendance.mockResolvedValue([]);
+
+    await service.scheduleAttendanceSync(TRIGGERED_AT);
+
+    expect(findAttendance).toHaveBeenCalledTimes(1);
+    expect(findAttendance).toHaveBeenCalledWith(
+      createExpectedAttendanceQuery(TRIGGERED_AT, true),
+    );
+    expect(createJob).not.toHaveBeenCalled();
+    expect(createChunk).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('uses a configured chunk size', () => {
@@ -503,6 +496,70 @@ function createAttendanceRecords(count: number) {
       },
     },
   }));
+}
+
+function createExpectedAttendanceQuery(
+  triggeredAt: Date,
+  isPilotTesting: boolean,
+) {
+  const eligibleAttendanceWhere = isPilotTesting
+    ? {
+        AND: [
+          {
+            myHrSyncRecord: {
+              is: null,
+            },
+          },
+          {
+            logDate: {
+              gte: new Date('2026-09-22T00:00:00.000Z'),
+            },
+            storeSyncRecords: {
+              store: {
+                name: {
+                  in: ['HOEW', 'HOEL'],
+                },
+              },
+            },
+          },
+        ],
+      }
+    : {
+        myHrSyncRecord: {
+          is: null,
+        },
+      };
+
+  return {
+    where: {
+      AND: [
+        eligibleAttendanceWhere,
+        {
+          createdAt: {
+            lte: triggeredAt,
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      userId: true,
+      createdAt: true,
+      logDate: true,
+      logType: true,
+      storeSyncRecords: {
+        select: {
+          store: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: 500,
+  };
 }
 
 function createPayload(count: number): MyHrPayload[] {

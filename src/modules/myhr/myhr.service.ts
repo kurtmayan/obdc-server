@@ -9,7 +9,7 @@ import {
 } from 'src/generated/prisma/enums';
 import authenticateMyHr from 'src/lib/authenticateMyHr';
 import { MyHrPayload, MyHrSyncPayload } from 'src/types/my-hr';
-import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from './myhr-sync-eligibility';
+import { getMyHrSyncEligibleAttendanceWhere } from './myhr-sync-eligibility';
 
 type TransactionClient = Parameters<
   Parameters<PrismaService['$transaction']>[0]
@@ -743,10 +743,14 @@ export class MyHrService {
     client: AttendanceQueryClient,
     triggeredAt: Date,
   ) {
+    const eligibleAttendanceWhere = getMyHrSyncEligibleAttendanceWhere(
+      this.configService,
+    );
+
     return client.attendanceRecord.findMany({
       where: {
         AND: [
-          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          eligibleAttendanceWhere,
           {
             createdAt: {
               lte: triggeredAt,
