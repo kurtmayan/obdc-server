@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SqsQueueService } from '../sqs-queue/sqs-queue.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE } from '../myhr/myhr-sync-eligibility';
+import { getMyHrSyncEligibleAttendanceWhere } from '../myhr/myhr-sync-eligibility';
 
 @Injectable()
 export class SchedulerService {
@@ -10,6 +11,7 @@ export class SchedulerService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
     private readonly sqsQueueService: SqsQueueService,
   ) {}
 
@@ -21,10 +23,13 @@ export class SchedulerService {
 
   async queueMyHrAttendanceSync(): Promise<boolean> {
     const triggeredAt = new Date();
+    const eligibleAttendanceWhere = getMyHrSyncEligibleAttendanceWhere(
+      this.configService,
+    );
     const attendanceRecord = await this.prisma.attendanceRecord.findFirst({
       where: {
         AND: [
-          MY_HR_SYNC_ELIGIBLE_ATTENDANCE_WHERE,
+          eligibleAttendanceWhere,
           {
             createdAt: {
               lte: triggeredAt,
