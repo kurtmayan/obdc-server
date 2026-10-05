@@ -33,7 +33,7 @@ describe('MyHR sync eligibility', () => {
         },
         {
           logDate: {
-            gte: new Date('2026-09-22T00:00:00.000Z'),
+            gte: new Date('2026-10-06T00:00:00.000Z'),
           },
           storeSyncRecords: {
             store: {

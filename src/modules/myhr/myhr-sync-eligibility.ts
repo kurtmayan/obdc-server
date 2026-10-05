@@ -15,8 +15,7 @@ export function getMyHrSyncEligibleAttendanceWhere(
   const pilotTestingValue = configReader.get<string>('IS_PILOT_TESTING');
   const isPilotTesting =
     typeof pilotTestingValue === 'string' &&
-    pilotTestingValue.trim().toLowerCase() ===
-    'true';
+    pilotTestingValue.trim().toLowerCase() === 'true';
 
   if (!isPilotTesting) {
     return unsyncedAttendanceWhere;
@@ -27,7 +26,7 @@ export function getMyHrSyncEligibleAttendanceWhere(
       unsyncedAttendanceWhere,
       {
         logDate: {
-          gte: new Date('2026-09-22T00:00:00.000Z'),
+          gte: new Date('2026-10-06T00:00:00.000Z'),
         },
         storeSyncRecords: {
           store: {
