@@ -66,60 +66,133 @@ model Devices {
 }
 
 model AttendanceRecord {
-  id                String          @id @default(cuid(2))
+  id                String              @id @default(cuid(2))
   userId            String
   employeeName      String
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
   logType           Int
   logDate           DateTime
   storeSyncRecordID String
-  storeSyncRecords  StoreSyncRecord @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+  storeSyncRecords  StoreSyncRecord     @relation(fields: [storeSyncRecordID], references: [id], onDelete: Cascade)
+  myHrSyncRecord    MyHrAttendanceSync?
+
+  @@index([createdAt, id])
 }
 
 enum LogStats {
   TIME_OUT @map("0")
-  TIME_IN @map("1")
+  TIME_IN  @map("1")
   NO_VALUE @map("2")
 }
 
 model BiometricRecord {
-  id        String   @id @default(cuid(2))
-  empid     String
-  logdt     String
-  logtm     String
-  logstats  LogStats
-  location  String
+  id       String   @id @default(cuid(2))
+  empid    String
+  logdt    String
+  logtm    String
+  logstats LogStats
+  location String
 
-  batchID   String
-  batch     MyHRBatch @relation(fields: [batchID], references: [id])
+  batchID String
+  batch   MyHRBatch @relation(fields: [batchID], references: [id])
 
   @@index([empid])
   @@index([batchID])
 }
 
 model MyHRBatch {
-  id                String            @id
-  biometricRecords  BiometricRecord[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String            @id
+  biometricRecords BiometricRecord[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 }
 
 model MyHrSync {
-  id            String   @id @default(cuid(2))
-  lastSyncedAt  DateTime?
-  lastRecordId  String?
-  status        SyncStatus @default(PENDING)
-  totalSynced   Int      @default(0)
-  errorMessage  String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String        @id @default(cuid())
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  lastSyncedAt DateTime?
+  jobs         MyHrSyncJob[]
+}
+
+model MyHrSyncJob {
+  id              String          @id @default(cuid())
+  status          SyncStatus      @default(PENDING)
+  totalRecords    Int             @default(0)
+  insertedRecords Int             @default(0)
+  failedRecords   Int             @default(0)
+  startDate       DateTime?
+  startRecordId   String?
+  endDate         DateTime?
+  endRecordId     String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  myHrSyncId      String
+  myHrSync        MyHrSync        @relation(fields: [myHrSyncId], references: [id], onDelete: Cascade)
+  chunks          MyHrSyncChunk[]
+
+  @@index([myHrSyncId, status])
+  @@index([status, startedAt])
+}
+
+model MyHrSyncChunk {
+  id              String               @id @default(cuid())
+  status          SyncStatus           @default(PENDING)
+  attemptCount    Int                  @default(0)
+  totalRecords    Int
+  insertedRecords Int                  @default(0)
+  failedRecords   Int                  @default(0)
+  payload         Json
+  batchId         String?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  myHrSyncJobId   String
+  myHrSyncJob     MyHrSyncJob          @relation(fields: [myHrSyncJobId], references: [id], onDelete: Cascade)
+  records         MyHrAttendanceSync[]
+
+  @@index([myHrSyncJobId, status])
+}
+
+// Authoritative delivery state for each source attendance record.  This
+// prevents a successfully uploaded record from being selected by a later job.
+model MyHrAttendanceSync {
+  id                 String               @id @default(cuid())
+  attendanceRecordId String               @unique
+  attendanceRecord   AttendanceRecord     @relation(fields: [attendanceRecordId], references: [id], onDelete: Cascade)
+  status             MyHrRecordSyncStatus @default(PENDING)
+  attemptCount       Int                  @default(0)
+  batchId            String?
+  errorMessage       String?
+  startedAt          DateTime?
+  syncedAt           DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  chunkId            String?
+  chunk              MyHrSyncChunk?       @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([chunkId, status])
+  @@index([batchId])
 }
 
 enum SyncStatus {
   PENDING
   PROCESSING
   SUCCESS
+  FAILED
+}
+
+enum MyHrRecordSyncStatus {
+  PENDING
+  PROCESSING
+  SYNCED
   FAILED
 }
 
