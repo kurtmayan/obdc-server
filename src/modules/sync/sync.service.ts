@@ -79,7 +79,7 @@ const SYNC_STATUS_REPORT_TIME_ZONE = 'Asia/Manila';
 const SYNC_STATUS_REPORT_HEADERS = [
   'Attendance Date',
   'Date and Time Synced',
-  'Location Name',
+  'Store Name',
   'Total Records',
   'Sync Status',
 ] as const;
@@ -347,7 +347,7 @@ export class SyncService {
       orderBy: [{ location: 'asc' }, { name: 'asc' }, { id: 'asc' }],
       select: {
         id: true,
-        location: true,
+        name: true,
         storeSyncRecords: {
           where: {
             syncDate: {
@@ -370,7 +370,7 @@ export class SyncService {
 
     const orderedStores = [...stores].sort(
       (first, second) =>
-        first.location.localeCompare(second.location) ||
+        first.name.localeCompare(second.name) ||
         first.id.localeCompare(second.id),
     );
     const attemptsByStoreAndDate = new Map<
@@ -435,7 +435,7 @@ export class SyncService {
                 'MM/dd/yyyy hh:mm:ss a',
               )
             : '',
-          locationName: store.location,
+          locationName: store.name,
           totalRecords: attempts.reduce(
             (total, attempt) => total + attempt._count.attendanceRecord,
             0,
