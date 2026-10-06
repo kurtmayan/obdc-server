@@ -95,6 +95,9 @@ describe('MyHrService attendance scheduling', () => {
       return values[key];
     });
     fetchMock.mockReset();
+    fetchMock.mockResolvedValue(
+      createResponse({ accessToken: 'token-1' }, { status: 200 }),
+    );
     global.fetch = fetchMock as unknown as typeof fetch;
 
     let chunkNumber = 0;
@@ -329,6 +332,25 @@ describe('MyHrService attendance scheduling', () => {
     }
   });
 
+  it('does not create a job or sync records when MyHR authentication fails', async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse(
+        { message: 'invalid credentials' },
+        { status: 401, statusText: 'Unauthorized' },
+      ),
+    );
+
+    await expect(service.scheduleAttendanceSync(TRIGGERED_AT)).rejects.toThrow(
+      'MyHR login failed: 401 Unauthorized',
+    );
+
+    expect(transaction).not.toHaveBeenCalled();
+    expect(createJob).not.toHaveBeenCalled();
+    expect(createChunk).not.toHaveBeenCalled();
+    expect(createAttendanceSync).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('adds pilot restrictions to attendance lookup when pilot testing is enabled', async () => {
     getConfig.mockImplementation((key: string) =>
       key === 'IS_PILOT_TESTING' ? 'true' : undefined,
@@ -512,7 +534,7 @@ function createExpectedAttendanceQuery(
           },
           {
             logDate: {
-              gte: new Date('2026-09-22T00:00:00.000Z'),
+              gte: new Date('2026-10-06T00:00:00.000Z'),
             },
             storeSyncRecords: {
               store: {

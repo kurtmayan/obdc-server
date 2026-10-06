@@ -210,6 +210,9 @@ export class MyHrService {
 
     this.logger.log('Starting queued MyHR attendance sync scheduling...');
 
+    this.clearMyHrToken();
+    await this.getMyHrToken();
+
     const scheduleResult = await this.createSyncJob(triggeredAt);
 
     if (scheduleResult.type === 'ACTIVE_JOB') {
