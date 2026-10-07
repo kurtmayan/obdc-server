@@ -11,6 +11,9 @@ export function getMyHrSyncEligibleAttendanceWhere(
     myHrSyncRecord: {
       is: null,
     },
+    logDate: {
+      gte: new Date('2026-10-06T00:00:00.000Z'),
+    },
   } satisfies Prisma.AttendanceRecordWhereInput;
   const pilotTestingValue = configReader.get<string>('IS_PILOT_TESTING');
   const isPilotTesting =
@@ -25,9 +28,6 @@ export function getMyHrSyncEligibleAttendanceWhere(
     AND: [
       unsyncedAttendanceWhere,
       {
-        logDate: {
-          gte: new Date('2026-10-06T00:00:00.000Z'),
-        },
         storeSyncRecords: {
           store: {
             name: {
